@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Audit log{% endblock %}
+{% block content %}
+<div class="page-header"><h1 class="page-title">Audit log</h1><p class="page-subtitle">Latest 200 user and synchronization events</p></div>
+<form class="card card-body mb-3" method="get"><div class="row g-2 align-items-end">
+  <div class="col-md-4"><label class="form-label">Action contains</label><input class="form-control" name="action" value="{{ selected_action }}" placeholder="sync, connection, user"></div>
+  <div class="col-md-3"><label class="form-label">User</label><select class="form-select" name="user_id"><option value="">All users</option>{% for user in users %}<option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.username }}</option>{% endfor %}</select></div>
+  <div class="col-md-auto"><button class="btn btn-primary">Filter</button> <a class="btn btn-outline-secondary" href="{{ url_for('main.audit_logs') }}">Clear</a></div>
+</div></form>
+<div class="table-panel table-responsive"><table class="table table-hover"><thead><tr><th>ID</th><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody>
+{% for log in logs %}<tr><td>#{{ log.id }}</td><td class="text-nowrap">{{ log.created_at }}</td><td>{{ log.user.username if log.user else 'system' }}</td><td><code>{{ log.action }}</code></td><td>{{ log.details or '-' }}</td></tr>{% else %}<tr><td class="empty-state" colspan="5">No audit events match the filters.</td></tr>{% endfor %}
+</tbody></table></div>
+{% if logs_pagination.total_pages > 1 %}
+<nav class="pager" aria-label="Audit pagination">
+  <div class="pager-summary">Showing {{ logs_pagination.start_item }}-{{ logs_pagination.end_item }} of {{ logs_pagination.total }}</div>
+  <div class="pager-links">
+    <a class="btn btn-outline-secondary btn-sm {% if not logs_pagination.has_prev %}disabled{% endif %}" href="{{ url_for('main.audit_logs', page=logs_pagination.prev_page, action=selected_action, user_id=selected_user_id) }}">Previous</a>
+    <a class="btn btn-outline-secondary btn-sm {% if not logs_pagination.has_next %}disabled{% endif %}" href="{{ url_for('main.audit_logs', page=logs_pagination.next_page, action=selected_action, user_id=selected_user_id) }}">Next</a>
+  </div>
+</nav>
+{% endif %}
+{% endblock %}

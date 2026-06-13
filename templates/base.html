@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Sync Manager{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='app.css', v='20260612-7') }}" rel="stylesheet">
+</head>
+<body>
+{% from '_icons.html' import icon %}
+{% if current_user.is_authenticated %}
+<header class="topbar">
+  <a class="topbar-brand" href="{{ url_for('main.dashboard') }}"><span class="brand-box">{{ icon('sync', 20) }}</span>Sync Manager</a>
+  <div class="topbar-account"><span>{{ current_user.username }}</span><span class="role-pill">{{ current_user.role }}</span><form method="post" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="signout-link">Sign out</button></form></div>
+</header>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-label">Workspace</div>
+    <nav class="sidebar-nav">
+      <a class="sidebar-link {% if request.endpoint == 'main.dashboard' or request.endpoint == 'sync.job_detail' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">{{ icon('jobs', 19) }}<span>Jobs</span></a>
+      <a class="sidebar-link {% if request.blueprint == 'connections' %}active{% endif %}" href="{{ url_for('connections.index') }}">{{ icon('database', 19) }}<span>Connections</span></a>
+      <a class="sidebar-link {% if request.endpoint == 'main.audit_logs' %}active{% endif %}" href="{{ url_for('main.audit_logs') }}">{{ icon('audit', 19) }}<span>Audit log</span></a>
+      {% if current_user.role == 'administrator' %}<a class="sidebar-link {% if request.blueprint == 'users' %}active{% endif %}" href="{{ url_for('users.index') }}">{{ icon('users', 19) }}<span>Users</span></a>{% endif %}
+      {% if current_user.role == 'administrator' %}<a class="sidebar-link {% if request.blueprint == 'notifications' %}active{% endif %}" href="{{ url_for('notifications.settings') }}">{{ icon('notification', 19) }}<span>Notifications</span></a>{% endif %}
+    </nav>
+    {% if current_user.role in ['administrator', 'operator'] %}<div class="sidebar-action"><a class="btn btn-primary w-100 d-flex align-items-center justify-content-center gap-2" href="{{ url_for('sync.create') }}">{{ icon('plus', 16) }} New synchronization</a></div>{% endif %}
+  </aside>
+  <main class="main-content">
+    {% for category, message in get_flashed_messages(with_categories=true) %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
+{% else %}
+<main class="login-shell">
+  {% for category, message in get_flashed_messages(with_categories=true) %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
+{% endif %}
+{% block content %}{% endblock %}
+{% if current_user.is_authenticated %}</main></div>{% else %}</main>{% endif %}
+</body>
+</html>

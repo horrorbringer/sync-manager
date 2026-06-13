@@ -1,0 +1,382 @@
+{% extends 'base.html' %}
+{% from '_icons.html' import icon %}
+{% block title %}New synchronization{% endblock %}
+{% block content %}
+<div class="page-header sync-page-header">
+  <div>
+    <div class="sync-page-title-row">
+      <h1 class="page-title mb-0">New synchronization</h1>
+      <span class="sync-safety-badge">{{ icon('check', 15) }} Auto-orders multi-table syncs</span>
+    </div>
+    <p class="page-subtitle">Copy one table from a source database to a target database.</p>
+    <div class="sync-hint">FKs copy directly by default.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Cancel</a>
+</div>
+
+{% if connections|length < 2 %}
+<div class="sync-notice sync-notice-warning">
+  <span class="sync-notice-icon">{{ icon('warning', 20) }}</span>
+  <div><strong>Two enabled connections are required</strong><p>Add or enable another database connection before creating a synchronization.</p></div>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('connections.index') }}">Manage connections</a>
+</div>
+{% else %}
+<form method="post" class="sync-builder" id="sync-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="execute" id="sync-action">
+
+  <section class="card sync-step">
+    <div class="sync-step-number">1</div>
+    <div class="sync-step-content">
+      <div class="sync-step-heading">
+        <div><h2>Choose direction</h2><p>Data flows from the source into the target.</p></div>
+        <span class="sync-safety-badge">{{ icon('check', 15) }} No target deletes</span>
+      </div>
+      <div class="sync-direction-grid">
+        <div class="connection-picker">
+          <label class="form-label" for="source-id">Source connection</label>
+          <select class="form-select" id="source-id" name="source_id" required>
+            {% for item in connections %}<option value="{{ item.id }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" {% if selected_source_id == item.id or (not selected_source_id and loop.first) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
+          </select>
+          <div class="connection-summary" id="source-summary"></div>
+        </div>
+        <div class="sync-direction-control">
+          <span class="sync-flow-line"></span>
+          <button class="sync-swap-button" type="button" id="swap-connections" title="Swap source and target" aria-label="Swap source and target">{{ icon('swap', 18) }}</button>
+          <span class="sync-flow-arrow">{{ icon('arrow-right', 20) }}</span>
+        </div>
+        <div class="connection-picker">
+          <label class="form-label" for="target-id">Target connection</label>
+          <select class="form-select" id="target-id" name="target_id" required>
+            {% for item in connections %}<option value="{{ item.id }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" {% if selected_target_id == item.id or (not selected_target_id and loop.index == 2) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
+          </select>
+          <div class="connection-summary" id="target-summary"></div>
+        </div>
+      </div>
+      <div class="sync-inline-error d-none" id="same-connection-error">Source and target must be different connections.</div>
+    </div>
+  </section>
+
+  <section class="card sync-step">
+    <div class="sync-step-number">2</div>
+    <div class="sync-step-content">
+      <div class="sync-step-heading">
+        <div><h2>Select tables</h2><p>Discover tables from the selected source, then choose one or many to synchronize.</p></div>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="submit" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" data-action="discover" formnovalidate>{{ icon('search', 16) }} Discover tables</button>
+        </div>
+      </div>
+      {% if table_details %}
+        <div class="table-source-context">
+        <span>{{ icon('database', 17) }}</span>
+        <div><span>Browsing source database</span><strong id="table-source-name"></strong></div>
+        <span class="table-result-count"><strong id="visible-table-count">{{ table_details|length }}</strong> of {{ table_details|length }} tables</span>
+      </div>
+      <div class="table-mapping-note">FKs copy directly by default. Use a mapping rule only when source and target keys differ.</div>
+      <div class="table-picker" data-discovered-source="{{ selected_source_id }}" data-discovered-target="{{ selected_target_id }}" data-cyclic-tables="{% if dependency_state and dependency_state.cycle_tables %}{{ dependency_state.cycle_tables|join('|') }}{% endif %}">
+        <label class="form-label" for="table-search">Find source tables</label>
+        <div class="table-search-wrap">
+          <span>{{ icon('search', 16) }}</span>
+          <input class="form-control" id="table-search" type="search" placeholder="Search table name or primary key" autocomplete="off">
+          <kbd>/</kbd>
+        </div>
+        <div class="table-bulk-bar">
+          <button type="button" class="table-bulk-action" id="select-all-tables">Select all tables</button>
+          <button type="button" class="table-bulk-action" id="clear-tables">Clear</button>
+          <span class="table-selected-count"><strong id="selected-table-count">{{ selected_tables|length }}</strong> selected</span>
+        </div>
+        <div class="table-bulk-hint">Advanced bulk action: every discovered table is synchronized automatically in dependency order. Cyclic tables run automatically in cycle-safe mode.</div>
+        <div class="d-flex justify-content-end mt-2">
+          <button type="submit" class="btn btn-outline-warning d-inline-flex align-items-center gap-2" id="bulk-sync-button" data-action="sync_all" data-loading-text="Preparing bulk sync..." onclick="return confirm('Run an advanced bulk synchronization for every discovered table? {% if selected_sync_mode == 'insert_only' %}Existing target rows will be ignored.{% else %}Existing target rows may be updated.{% endif %}')">{{ icon('play', 16) }} Bulk sync all tables</button>
+        </div>
+        <div class="table-picker-list" id="table-picker-list" aria-label="Source tables">
+          {% for table in table_details %}
+          <label class="table-picker-option {% if table.name in selected_tables %}selected{% endif %}" data-table-name="{{ table.name }}" data-search="{{ table.name|lower }} {{ table.primary_key|default([])|join(' ')|lower }} {{ table.dependencies|default([])|join(' ')|lower }}">
+            <input class="form-check-input table-checkbox" type="checkbox" name="table_names" value="{{ table.name }}" {% if table.name in selected_tables %}checked{% endif %}>
+            <span class="table-option-main"><strong>{{ table.name }}</strong><small>{{ table.column_count }} column{{ '' if table.column_count == 1 else 's' }}</small></span>
+            <span class="table-option-meta">
+              {% if table.primary_key %}<span class="table-meta-pill">PK {{ table.primary_key|join(', ') }}</span>{% else %}<span class="table-meta-pill table-meta-warning">No primary key</span>{% endif %}
+              {% if table.dependencies %}<span class="table-meta-pill">Depends on {{ table.dependencies|join(', ') }}</span>{% endif %}
+              {% if table.mapping_preview %}
+                <span class="table-meta-pill table-meta-info">{{ table.mapping_state|capitalize }}: {% for mapping in table.mapping_preview %}{{ mapping.display }}{% if not loop.last %}; {% endif %}{% endfor %}</span>
+              {% elif table.mapping_columns %}
+                <span class="table-meta-pill table-meta-info">{{ table.mapping_state|capitalize }}: {{ table.mapping_columns|join(', ') }}</span>
+              {% else %}
+                <span class="table-meta-pill table-meta-info">{{ table.mapping_state|capitalize }}</span>
+              {% endif %}
+              {% if dependency_state and table.name in dependency_state.cycle_tables %}<span class="table-meta-pill table-meta-danger">Cyclic dependency</span>{% endif %}
+              {% if table.target_exists %}<span class="table-target-state table-target-found">{{ icon('check', 14) }} Target found</span>{% else %}<span class="table-target-state table-target-missing">{{ icon('warning', 14) }} Target missing</span>{% endif %}
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        {% if dependency_state %}
+        <div class="dependency-plan {% if dependency_state.cycle_tables %}dependency-plan-warning{% endif %}">
+          <div class="dependency-plan-row">
+            <strong>Run order</strong>
+            <span>{% if dependency_state.ordered_tables %}{{ dependency_state.ordered_tables|join(' → ') }}{% else %}No safe order{% endif %}</span>
+          </div>
+        </div>
+        {% endif %}
+        <div class="table-picker-empty d-none" id="table-picker-empty">No tables match your search.</div>
+        <div class="table-picker-stale d-none" id="table-picker-stale">The source or target connection changed. Discover tables again to refresh this list.</div>
+        <div class="selected-table-summary {% if not selected_tables %}d-none{% endif %}" id="selected-table-summary"><span>Ready for validation</span><strong id="selected-table-label">{{ selected_tables|length }} table{{ '' if selected_tables|length == 1 else 's' }} selected</strong></div>
+      </div>
+      {% else %}
+      <div class="table-empty-state">
+        <span class="table-empty-icon">{{ icon('database', 24) }}</span>
+        <div><strong>No tables loaded</strong><p>Click <b>Discover tables</b> to browse the selected source database, or enter a known table name below.</p></div>
+      </div>
+      <label class="form-label" for="table-name">Table name <span class="text-muted fw-normal">optional manual entry</span></label>
+      <input class="form-control" id="table-name" name="table_name" value="{{ selected_tables[0] if selected_tables|length == 1 else '' }}" placeholder="Example: customers" required>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card sync-step">
+    <div class="sync-step-number">3</div>
+    <div class="sync-step-content">
+      <div class="sync-step-heading sync-run-heading">
+        <div><h2>Validate and run</h2><p>Check schema compatibility and record counts before {{ 'running the synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'creating the background job' }}.</p></div>
+      </div>
+      <div class="sync-mode-picker">
+        <label class="form-label">Sync behavior</label>
+        <div class="sync-mode-options">
+          <label class="sync-mode-option {% if selected_sync_mode == 'insert_only' %}selected{% endif %}">
+            <input type="radio" name="sync_mode" value="insert_only" {% if selected_sync_mode == 'insert_only' %}checked{% endif %}>
+            <span><strong>Add new records only <span class="badge text-bg-success ms-1">Recommended</span></strong><small>Safest default. Existing target rows are left unchanged and duplicate keys are ignored.</small></span>
+          </label>
+          <label class="sync-mode-option {% if selected_sync_mode == 'upsert' %}selected{% endif %}">
+            <input type="radio" name="sync_mode" value="upsert" {% if selected_sync_mode == 'upsert' %}checked{% endif %}>
+            <span><strong>Add new records and update existing ones</strong><small>Use when the source should overwrite matching target rows.</small></span>
+          </label>
+        </div>
+        <div class="sync-performance-presets">
+          <div class="sync-performance-presets-header">
+            <strong>Performance presets</strong>
+            <span>Quick guidance for common sync goals.</span>
+          </div>
+          <div class="sync-performance-grid">
+            <div class="sync-performance-card sync-performance-fastest">
+              <span class="sync-performance-label">Fastest</span>
+              <strong>Add new records only</strong>
+              <small>Best for append-only syncs and initial migrations when you want the least write overhead.</small>
+            </div>
+            <div class="sync-performance-card sync-performance-safest">
+              <span class="sync-performance-label">Safest</span>
+              <strong>Validate first</strong>
+              <small>Run validation before syncing so you can review tables and catch issues early.</small>
+            </div>
+            <div class="sync-performance-card sync-performance-balanced">
+              <span class="sync-performance-label">Balanced</span>
+              <strong>Bulk only when needed</strong>
+              <small>Use bulk sync for first-time migrations, then switch to selected-table runs.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sync-actions">
+        <button type="submit" class="btn btn-outline-primary d-inline-flex align-items-center gap-2" id="dry-run-button" data-action="dry_run">{{ icon('test', 17) }} Run validation</button>
+        <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-2" id="queue-button" data-action="execute" onclick="return confirm('{{ 'Run' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue' }} this one-way synchronization? {% if selected_sync_mode == 'insert_only' %}Existing target rows will be ignored.{% else %}Existing target rows may be updated.{% endif %}')">{{ icon('play', 16) }} {{ 'Run synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue synchronization' }}</button>
+      </div>
+      <div class="sync-submit-state d-none" id="sync-submit-state">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        <span>Submitting...</span>
+        <span id="sync-submit-text"></span>
+      </div>
+      <div class="sync-safety-note">{% if selected_sync_mode == 'insert_only' %}This run will only add new rows. Existing target rows are not updated.{% else %}Only inserts and updates are performed. Rows are never deleted from the target.{% endif %} {% if config.SYNC_EXECUTION_MODE == 'inline' %}This page waits until the job finishes; Redis is not required.{% else %}The job runs through Celery in the background.{% endif %}</div>
+    </div>
+  </section>
+</form>
+{% endif %}
+
+{% if results %}
+{% set has_errors = results|selectattr('result.errors')|list|length > 0 %}
+<section class="card validation-result {% if has_errors %}validation-result-error{% else %}validation-result-success{% endif %}">
+  <div class="validation-result-header">
+    <span class="validation-result-icon">{{ icon('warning' if has_errors else 'check', 20) }}</span>
+    <div><h2>{{ 'Validation found issues' if has_errors else 'Ready to run' }}</h2><p>{{ 'No jobs were started. Resolve every table issue first.' if has_errors else results|length ~ ' selected table' ~ ('' if results|length == 1 else 's') ~ ' passed validation.' }}</p></div>
+  </div>
+  <div class="bulk-validation-list">
+    {% for item in results %}
+      <div class="bulk-validation-item {% if item.result.errors %}has-error{% endif %}">
+        <div class="bulk-validation-table"><strong>{{ item.table }}</strong><span>{{ 'Needs attention' if item.result.errors else 'Ready' }}</span></div>
+      {% if item.result.errors %}
+      <ul>{% for error in item.result.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+      {% else %}
+      <div class="bulk-validation-metrics"><span>Source <strong>{{ item.result.source_count }}</strong></span><span>Target <strong>{{ item.result.target_count }}</strong></span><span>New <strong>{{ item.result.new_count }}</strong></span><span>Existing <strong>{{ item.result.existing_count }}</strong></span></div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<script>
+(function () {
+  const source = document.getElementById('source-id');
+  const target = document.getElementById('target-id');
+  const table = document.getElementById('table-name');
+  if (!source || !target) return;
+
+  const actionInput = document.getElementById('sync-action');
+  const error = document.getElementById('same-connection-error');
+  const dryRun = document.getElementById('dry-run-button');
+  const queue = document.getElementById('queue-button');
+  const bulkSync = document.getElementById('bulk-sync-button');
+  const submitState = document.getElementById('sync-submit-state');
+  const submitText = document.getElementById('sync-submit-text');
+  const tablePicker = document.querySelector('.table-picker');
+  const tableSearch = document.getElementById('table-search');
+  const tableOptions = Array.from(document.querySelectorAll('.table-picker-option'));
+  const tableCheckboxes = Array.from(document.querySelectorAll('.table-checkbox'));
+  const selectedCount = document.getElementById('selected-table-count');
+  const summary = document.getElementById('selected-table-summary');
+  const summaryLabel = document.getElementById('selected-table-label');
+  const visibleCount = document.getElementById('visible-table-count');
+  const emptyState = document.getElementById('table-picker-empty');
+  const staleState = document.getElementById('table-picker-stale');
+  const cyclicTables = tablePicker && tablePicker.dataset.cyclicTables ? tablePicker.dataset.cyclicTables.split('|').filter(Boolean) : [];
+
+  function renderSummary(select, targetId) {
+    const option = select.options[select.selectedIndex];
+    const summary = document.getElementById(targetId);
+    const database = document.createElement('strong');
+    const host = document.createElement('span');
+    database.textContent = option.dataset.database;
+    host.textContent = option.dataset.host;
+    summary.replaceChildren(database, host);
+  }
+
+  function updateState() {
+    renderSummary(source, 'source-summary');
+    renderSummary(target, 'target-summary');
+    const invalidDirection = source.value === target.value;
+    const selectedTables = tablePicker
+      ? tableCheckboxes.filter(function (checkbox) { return checkbox.checked; })
+      : (table && table.value.trim() ? [table.value.trim()] : []);
+    const missingTable = selectedTables.length === 0;
+    const allSelectedCyclic = selectedTables.length > 0 && cyclicTables.length > 0 && selectedTables.every(function (checkbox) {
+      return cyclicTables.includes(checkbox.value);
+    });
+    error.classList.toggle('d-none', !invalidDirection);
+    if (dryRun) dryRun.disabled = invalidDirection || missingTable;
+    if (queue) queue.disabled = invalidDirection || missingTable || allSelectedCyclic;
+    if (selectedCount) selectedCount.textContent = selectedTables.length;
+    if (summary) {
+      summary.classList.toggle('d-none', missingTable);
+      if (summaryLabel) {
+        summaryLabel.textContent = selectedTables.length + ' table' + (selectedTables.length === 1 ? '' : 's') + ' selected';
+      }
+    }
+  }
+
+  function syncVisualSelection() {
+    tableOptions.forEach(function (item) {
+      const selected = item.querySelector('.table-checkbox').checked;
+      item.classList.toggle('selected', selected);
+    });
+  }
+
+  function filterTables() {
+    const query = tableSearch.value.trim().toLowerCase();
+    let visible = 0;
+    tableOptions.forEach(function (option) {
+      const matches = option.dataset.search.includes(query);
+      option.classList.toggle('d-none', !matches);
+      if (matches) visible += 1;
+    });
+    if (visibleCount) visibleCount.textContent = visible;
+    if (emptyState) emptyState.classList.toggle('d-none', visible !== 0);
+    syncVisualSelection();
+    updateState();
+  }
+
+  function invalidateTablePicker() {
+    if (tablePicker && (source.value !== tablePicker.dataset.discoveredSource || target.value !== tablePicker.dataset.discoveredTarget)) {
+      tablePicker.classList.add('table-picker-is-stale');
+      if (staleState) staleState.classList.remove('d-none');
+      tableCheckboxes.forEach(function (checkbox) { checkbox.checked = false; });
+    }
+    syncVisualSelection();
+    updateState();
+  }
+
+  source.addEventListener('change', invalidateTablePicker);
+  target.addEventListener('change', invalidateTablePicker);
+  if (table) {
+    table.addEventListener('input', updateState);
+    table.addEventListener('change', updateState);
+  }
+  if (tablePicker) {
+      document.getElementById('table-source-name').textContent = source.options[source.selectedIndex].dataset.database;
+      const actionButtons = [dryRun, queue, bulkSync].filter(Boolean);
+      actionButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          if (actionInput && button.dataset.action) {
+            actionInput.value = button.dataset.action;
+          }
+        });
+      });
+      tableCheckboxes.forEach(function (checkbox) {
+        checkbox.addEventListener('change', function () {
+          syncVisualSelection();
+          updateState();
+        });
+      });
+      document.getElementById('select-all-tables').addEventListener('click', function () {
+        tableCheckboxes.forEach(function (checkbox) { checkbox.checked = true; });
+        syncVisualSelection();
+        updateState();
+    });
+    document.getElementById('clear-tables').addEventListener('click', function () {
+      tableCheckboxes.forEach(function (checkbox) { checkbox.checked = false; });
+      syncVisualSelection();
+      updateState();
+    });
+    const syncForm = document.getElementById('sync-form');
+    if (syncForm) {
+      syncForm.addEventListener('submit', function (event) {
+        const submitter = event.submitter;
+        const action = submitter && submitter.dataset.action ? submitter.dataset.action : (actionInput ? actionInput.value : 'execute');
+        if (actionInput) actionInput.value = action;
+        if (!['execute', 'sync_all', 'dry_run', 'discover'].includes(action)) return;
+        const activeButton = submitter || (action === 'sync_all' ? bulkSync : queue);
+        if (!activeButton || !['execute', 'sync_all'].includes(action)) return;
+        syncForm.setAttribute('aria-busy', 'true');
+        if (submitState && submitText) {
+          submitText.textContent = activeButton.dataset.loadingText || 'Working...';
+          submitState.classList.remove('d-none');
+        }
+        activeButton.disabled = true;
+        activeButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + (activeButton.dataset.loadingText || 'Working...');
+        [dryRun, queue, bulkSync].forEach(function (control) {
+          if (control && control !== activeButton) control.disabled = true;
+        });
+      });
+    }
+    tableSearch.addEventListener('input', filterTables);
+    tableSearch.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowDown') {
+        const firstVisible = tableOptions.find(function (option) { return !option.classList.contains('d-none'); });
+        if (firstVisible) { event.preventDefault(); firstVisible.focus(); }
+      }
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === '/' && document.activeElement !== tableSearch && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+        event.preventDefault();
+        tableSearch.focus();
+      }
+    });
+    syncVisualSelection();
+  }
+  document.getElementById('swap-connections').addEventListener('click', function () {
+    const sourceValue = source.value;
+    source.value = target.value;
+    target.value = sourceValue;
+    invalidateTablePicker();
+  });
+  updateState();
+}());
+</script>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends 'base.html' %}
+{% block title %}Job #{{ job.id }}{% endblock %}
+{% block content %}
+{% if job.status in ['pending', 'running'] %}<meta http-equiv="refresh" content="3">{% endif %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h1 class="page-title">Synchronization job #{{ job.id }}</h1><p class="page-subtitle mb-0">{{ job.table_name or 'No table selected' }}</p></div>
+  <div class="d-flex gap-2">
+    {% if job.status == 'pending' and current_user.role in ['administrator', 'operator'] %}
+    <form method="post" action="{{ url_for('sync.cancel_job', job_id=job.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-danger" onclick="return confirm('Cancel this queued synchronization job?')">Cancel queued job</button>
+    </form>
+    {% endif %}
+    {% if job.status == 'failed' and job.table_name and current_user.role in ['administrator', 'operator'] %}
+    <form method="post" action="{{ url_for('sync.retry_job', job_id=job.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-warning" onclick="return confirm('Retry this failed synchronization job?')">Retry job</button>
+    </form>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back to dashboard</a>
+  </div>
+</div>
+<div class="card job-detail-card"><div class="card-body">
+  {% if job.status == 'pending' %}
+  <div class="job-state-note job-state-pending"><strong>Waiting for background worker</strong><span>This job is queued, but synchronization has not started. Ensure the Celery worker is running.</span></div>
+  {% elif job.status == 'running' %}
+  <div class="job-state-note job-state-running"><strong>Synchronization in progress</strong><span>The worker is currently copying records to the target.</span></div>
+  {% elif job.status == 'completed' %}
+  <div class="job-state-note {% if job.failed_count %}job-state-warning{% else %}job-state-completed{% endif %}"><strong>{% if job.failed_count %}Sync completed with dropped rows{% else %}Sync completed successfully{% endif %}</strong><span>{{ job.inserted_count }} inserted, {{ job.updated_count }} updated, {{ job.skipped_count }} skipped, {{ job.failed_count }} dropped.{% if job.source_count is not none %} {{ job.processed_count }} processed / {{ job.source_count }} source.{% endif %}</span></div>
+  {% endif %}
+  {% if job.dropped_rows %}
+  <div class="mt-3">
+    <details class="job-dropped-details">
+      <summary>
+        <span class="section-title mb-0">Dropped rows</span>
+        <span class="job-dropped-count">{{ job.dropped_rows|length }} row{{ '' if job.dropped_rows|length == 1 else 's' }}</span>
+      </summary>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Table</th><th>Row</th><th>Reason</th></tr></thead>
+          <tbody>
+            {% for dropped in job.dropped_rows[:10] %}
+            <tr>
+              <td>{{ dropped.table }}</td>
+              <td>{% if dropped.row %}{{ dropped.row|tojson }}{% else %}-{% endif %}</td>
+              <td>{{ dropped.reason }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if job.dropped_rows|length > 10 %}<p class="text-muted mb-0">{{ job.dropped_rows|length - 10 }} more dropped row{{ '' if job.dropped_rows|length - 10 == 1 else 's' }} not shown.</p>{% endif %}
+    </details>
+  </div>
+  {% endif %}
+  <details class="job-details-block mt-3" open>
+    <summary>
+      <span class="section-title mb-0">Job details</span>
+      <span class="job-details-summary">{{ job.source.name }} → {{ job.target.name }}</span>
+    </summary>
+    <dl class="row mb-0 detail-list">
+      <dt class="col-sm-3">Status</dt><dd class="col-sm-9"><span class="badge text-bg-{{ 'success' if job.status == 'completed' else 'danger' if job.status == 'failed' else 'warning' if job.status == 'pending' else 'primary' }}">{{ 'queued' if job.status == 'pending' else job.status }}</span></dd>
+      <dt class="col-sm-3">Direction</dt><dd class="col-sm-9">{{ job.source.name }} / {{ job.source.database_name }} &rarr; {{ job.target.name }} / {{ job.target.database_name }}</dd>
+      <dt class="col-sm-3">Table</dt><dd class="col-sm-9">{{ job.table_name }}</dd>
+      <dt class="col-sm-3">Sync mode</dt><dd class="col-sm-9">{{ job.sync_mode_label }}</dd>
+      <dt class="col-sm-3">Cycle sync</dt><dd class="col-sm-9">{{ 'Enabled' if job.cycle_sync else 'Disabled' }}</dd>
+      <dt class="col-sm-3">Processed</dt><dd class="col-sm-9"><div class="d-flex align-items-center gap-2"><div class="progress flex-grow-1" aria-label="Rows processed"><div class="progress-bar" style="width:{{ job.progress_percent }}%"></div></div><span>{{ job.processed_count }} processed{% if job.source_count is not none %} / {{ job.source_count }} source{% endif %} ({{ job.progress_percent }}%)</span></div></dd>
+      <dt class="col-sm-3">Duration</dt><dd class="col-sm-9">{{ job.duration_seconds|duration }}</dd>
+      <dt class="col-sm-3">Started</dt><dd class="col-sm-9">{{ job.started_at|compact_datetime }}</dd>
+      <dt class="col-sm-3">Finished</dt><dd class="col-sm-9">{{ job.finished_at|compact_datetime }}</dd>
+      {% if job.error_message %}<dt class="col-sm-3">Error</dt><dd class="col-sm-9 text-danger">{{ job.error_message }}</dd>{% endif %}
+    </dl>
+  </details>
+</div></div>
+{% endblock %}

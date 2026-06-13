@@ -1,0 +1,22 @@
+{% macro icon(name, size=16) -%}
+{% set paths = {
+  'jobs': '<path d="M4 4h12v12H4z"/><path d="M7 8h6M7 11h6"/>',
+  'database': '<ellipse cx="10" cy="5" rx="6" ry="3"/><path d="M4 5v5c0 1.7 2.7 3 6 3s6-1.3 6-3V5M4 10v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/>',
+  'audit': '<path d="M5 3h10v14H5z"/><path d="M8 7h4M8 10h4M8 13h3"/>',
+  'users': '<circle cx="10" cy="7" r="3"/><path d="M4 18c.5-4 2.5-6 6-6s5.5 2 6 6"/>',
+  'plus': '<path d="M10 4v12M4 10h12"/>',
+  'edit': '<path d="M4 16l1-4L14 3l3 3-9 9-4 1zM12 5l3 3"/>',
+  'test': '<path d="M8 3h4M9 3v5l-5 8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l-5-8V3M7 13h6"/>',
+  'power': '<path d="M10 2v8M5 5a7 7 0 1 0 10 0"/>',
+  'trash': '<path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11M9 9v5M11 9v5"/>',
+  'check': '<path d="M4 10l4 4 8-9"/>',
+  'warning': '<path d="M10 3l8 14H2L10 3zM10 8v4M10 15h.01"/>',
+  'notification': '<path d="M5 14h10l-1.5-2V8a3.5 3.5 0 0 0-7 0v4L5 14zM8 16a2 2 0 0 0 4 0"/>',
+  'sync': '<ellipse cx="7" cy="6" rx="4" ry="2"/><path d="M3 6v4c0 1.1 1.8 2 4 2M11 6v2M13 10h4l-1.5-1.5M17 10l-1.5 1.5M17 14h-4l1.5-1.5M13 14l1.5 1.5M3 10v4c0 1.1 1.8 2 4 2h2"/>',
+  'search': '<circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/>',
+  'play': '<path d="M7 4l9 6-9 6V4z"/>',
+  'arrow-right': '<path d="M3 10h14M12 5l5 5-5 5"/>',
+  'swap': '<path d="M4 7h11l-3-3M15 13H4l3 3"/>'
+} %}
+<svg class="app-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ paths.get(name, '')|safe }}</svg>
+{%- endmacro %}

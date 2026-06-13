@@ -1,0 +1,137 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit' if item else 'Add' }} connection{% endblock %}
+{% block content %}
+<div class="page-header"><h1 class="page-title">{{ 'Edit' if item else 'Add' }} MySQL connection</h1><p class="page-subtitle">{% if item %}Leave password blank to keep the current password{% else %}Credentials are encrypted before storage{% endif %}</p></div>
+<form method="post" class="card card-body compact-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row">
+    <div class="col-md-6"><label class="form-label">Name</label><input class="form-control" name="name" value="{{ item.name if item else '' }}" required></div>
+    <div class="col-md-6"><label class="form-label">Host</label><input class="form-control" name="host" value="{{ item.host if item else 'localhost' }}" required></div>
+    <div class="col-md-6"><label class="form-label">Port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="{{ item.port if item else 3306 }}" required></div>
+    <div class="col-md-6"><label class="form-label">Database</label><input class="form-control" name="database_name" value="{{ item.database_name if item else '' }}" required></div>
+    <div class="col-md-6"><label class="form-label">Username</label><input class="form-control" name="username" value="{{ item.username if item else '' }}" required></div>
+    <div class="col-md-6"><label class="form-label">Password <span class="text-muted fw-normal">{{ 'leave blank to keep current' if item else 'optional' }}</span></label><input class="form-control" type="password" name="password" autocomplete="new-password"></div>
+    <div class="col-12">
+      <div class="mapping-tools-toggle form-check form-switch mt-3">
+        <input class="form-check-input" type="checkbox" role="switch" id="show-mapping-tools">
+        <label class="form-check-label" for="show-mapping-tools">Show advanced FK mapping tools</label>
+      </div>
+      <div class="mapping-advanced-tools d-none" id="mapping-advanced-tools">
+        <label class="form-label">FK mapping rules <span class="text-muted fw-normal">optional JSON</span></label>
+        <textarea class="form-control" name="fk_mapping_rules" rows="6" placeholder='{"canned_responses": {"created_by": "username", "category_id": "title"}}'>{{ item.fk_mapping_rules if item and item.fk_mapping_rules else '' }}</textarea>
+        <div class="form-text">Map each source table to foreign-key columns and the lookup column to use on the referenced table.</div>
+        <div class="mapping-summary">
+          <strong>Rule summary</strong>
+          <span class="mapping-summary-state mapping-summary-{{ mapping_summary.state }}">{{ mapping_summary.label }}</span>
+          {% if mapping_summary.details %}
+          <div class="mapping-summary-list">
+            {% for rule in mapping_summary.details %}
+            <span><code>{{ rule.table }}</code>.<code>{{ rule.column }}</code> → <code>{{ rule.lookup }}</code></span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="mapping-wizard">
+          <div class="mapping-helper-header">
+            <strong>Step-by-step builder</strong>
+            <span>Add one rule at a time and the JSON updates automatically.</span>
+          </div>
+          <div class="mapping-wizard-grid">
+            <input class="form-control form-control-sm" id="mapping-table" type="text" placeholder="Source table e.g. canned_responses">
+            <input class="form-control form-control-sm" id="mapping-column" type="text" placeholder="FK column e.g. created_by">
+            <input class="form-control form-control-sm" id="mapping-lookup" type="text" placeholder="Lookup column e.g. username">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="add-mapping-rule">Add rule</button>
+          </div>
+          <div class="mapping-helper-example">Example: <code>canned_responses.created_by → username</code></div>
+        </div>
+        <div class="mapping-helper">
+          <div class="mapping-helper-header">
+            <strong>Quick presets</strong>
+            <span>Fill the JSON field with common patterns.</span>
+          </div>
+          <div class="mapping-helper-actions">
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-mapping-preset='{"canned_responses":{"created_by":"username","category_id":"title"}}'>Support defaults</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-mapping-preset='{"tickets":{"requester_id":"email","assignee_id":"username"}}'>User lookups</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-mapping-preset='{"orders":{"customer_id":"email"}}'>Customer email</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="clear-mapping-preset">Clear</button>
+          </div>
+          <div class="mapping-helper-example">
+            Example: <code>{"canned_responses": {"created_by": "username", "category_id": "title"}}</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mt-3"><button class="btn btn-primary">{{ 'Save changes' if item else 'Save connection' }}</button> <a class="btn btn-outline-secondary" href="{{ url_for('connections.index') }}">Cancel</a></div>
+</form>
+<script>
+(function () {
+  const field = document.querySelector('textarea[name="fk_mapping_rules"]');
+  if (!field) return;
+  const toolsToggle = document.getElementById('show-mapping-tools');
+  const advancedTools = document.getElementById('mapping-advanced-tools');
+  const tableInput = document.getElementById('mapping-table');
+  const columnInput = document.getElementById('mapping-column');
+  const lookupInput = document.getElementById('mapping-lookup');
+  const addRule = document.getElementById('add-mapping-rule');
+  function toggleAdvancedTools() {
+    if (!toolsToggle || !advancedTools) return;
+    advancedTools.classList.toggle('d-none', !toolsToggle.checked);
+  }
+  function parseRules() {
+    const raw = (field.value || '').trim();
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  }
+  function writeRules(rules) {
+    field.value = JSON.stringify(rules, null, 2);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if (addRule) {
+    addRule.addEventListener('click', function () {
+      const tableName = (tableInput && tableInput.value || '').trim();
+      const columnName = (columnInput && columnInput.value || '').trim();
+      const lookupName = (lookupInput && lookupInput.value || '').trim();
+      if (!tableName || !columnName || !lookupName) {
+        field.focus();
+        return;
+      }
+      const rules = parseRules();
+      if (!rules[tableName] || typeof rules[tableName] !== 'object' || Array.isArray(rules[tableName])) {
+        rules[tableName] = {};
+      }
+      rules[tableName][columnName] = lookupName;
+      writeRules(rules);
+      if (tableInput) tableInput.value = '';
+      if (columnInput) columnInput.value = '';
+      if (lookupInput) lookupInput.value = '';
+      field.focus();
+    });
+  }
+  document.querySelectorAll('[data-mapping-preset]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      field.value = button.dataset.mappingPreset;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.focus();
+    });
+  });
+  const clear = document.getElementById('clear-mapping-preset');
+  if (clear) {
+    clear.addEventListener('click', function () {
+      field.value = '';
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.focus();
+    });
+  }
+  if (toolsToggle) {
+    toolsToggle.addEventListener('change', toggleAdvancedTools);
+    toggleAdvancedTools();
+  }
+}());
+</script>
+{% endblock %}

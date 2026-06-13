@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% from '_icons.html' import icon %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<div class="page-header"><h1 class="page-title">Telegram notifications</h1><p class="page-subtitle">Delivery failures are logged and never fail synchronization jobs</p></div>
+<form method="post" class="card card-body compact-form mb-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row">
+    <div class="col-md-6"><label class="form-label">Bot token</label><input class="form-control" type="password" name="bot_token" placeholder="{{ 'Leave blank to keep saved token' if settings.encrypted_bot_token else '123456:ABC...' }}" autocomplete="new-password"><div class="form-text">Stored encrypted. Create a bot using BotFather.</div></div>
+    <div class="col-md-6"><label class="form-label">Chat ID</label><input class="form-control" name="chat_id" value="{{ settings.chat_id or '' }}" placeholder="-1001234567890"></div>
+  </div>
+  <hr>
+  <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="is_enabled" id="enabled" {% if settings.is_enabled %}checked{% endif %}><label class="form-check-label" for="enabled">Enable Telegram notifications</label></div>
+  <div class="row">
+    <div class="col-md-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="notify_success" id="success" {% if settings.notify_success %}checked{% endif %}><label class="form-check-label" for="success">Successful synchronizations</label></div></div>
+    <div class="col-md-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="notify_failure" id="failure" {% if settings.notify_failure %}checked{% endif %}><label class="form-check-label" for="failure">Failed synchronizations</label></div></div>
+    <div class="col-md-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="notify_connection_failure" id="connection-failure" {% if settings.notify_connection_failure %}checked{% endif %}><label class="form-check-label" for="connection-failure">Connection test failures</label></div></div>
+    <div class="col-md-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="notify_retry" id="retry" {% if settings.notify_retry %}checked{% endif %}><label class="form-check-label" for="retry">Synchronization retries</label></div></div>
+  </div>
+  <div class="mt-3"><button class="btn btn-primary">Save settings</button></div>
+</form>
+<form method="post" action="{{ url_for('notifications.test_message') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-secondary d-flex align-items-center gap-2">{{ icon('notification', 16) }} Send test message</button></form>
+{% endblock %}

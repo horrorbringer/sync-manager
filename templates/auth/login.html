@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% from '_icons.html' import icon %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="card"><div class="card-body p-4">
+  <div class="d-flex align-items-center gap-2 mb-3"><span class="brand-box">{{ icon('sync', 20) }}</span><strong>Sync Manager</strong></div>
+  <h1 class="page-title mb-3">Sign in</h1>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="form-label">Username</label><input class="form-control mb-2" name="username" required autofocus>
+    <label class="form-label">Password</label><input class="form-control mb-3" type="password" name="password" required>
+    <button class="btn btn-primary w-100">Login</button>
+  </form>
+</div></div>
+{% endblock %}

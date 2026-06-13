@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-start"><div><h1 class="page-title">Users</h1><p class="page-subtitle">Roles, account access, and password administration</p></div><a class="btn btn-primary" href="{{ url_for('users.create') }}">Add user</a></div>
+<div class="table-panel table-responsive"><table class="table table-hover"><thead><tr><th>User</th><th>Status</th><th>Role</th><th>Created</th><th>Password reset</th><th></th></tr></thead><tbody>
+{% for user in users %}<tr>
+  <td><strong>{{ user.username }}</strong>{% if user.id == current_user.id %} <span class="text-muted">(you)</span>{% endif %}</td>
+  <td><span class="badge text-bg-{{ 'success' if user.is_active_account else 'secondary' }}">{{ 'active' if user.is_active_account else 'disabled' }}</span></td>
+  <td><form class="d-flex gap-1" method="post" action="{{ url_for('users.update_role', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select class="form-select form-select-sm" name="role" {% if user.id == current_user.id %}disabled{% endif %}>{% for role in ['administrator','operator','viewer'] %}<option value="{{ role }}" {% if user.role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}</select>{% if user.id != current_user.id %}<button class="btn btn-sm btn-outline-secondary">Save</button>{% endif %}</form></td>
+  <td class="text-nowrap">{{ user.created_at|compact_datetime }}</td>
+  <td><form class="d-flex gap-1" method="post" action="{{ url_for('users.reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control form-control-sm" type="password" name="password" minlength="8" placeholder="New password" required><button class="btn btn-sm btn-outline-secondary">Reset</button></form></td>
+  <td class="text-end">{% if user.id != current_user.id %}<form method="post" action="{{ url_for('users.toggle_active', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-{{ 'danger' if user.is_active_account else 'success' }}">{{ 'Disable' if user.is_active_account else 'Enable' }}</button></form>{% endif %}</td>
+</tr>{% else %}<tr><td class="empty-state" colspan="6">No users found.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
