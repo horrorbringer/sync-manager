@@ -63,6 +63,8 @@
       <dt class="col-sm-3">Direction</dt><dd class="col-sm-9">{{ job.source.name }} / {{ job.source.database_name }} &rarr; {{ job.target.name }} / {{ job.target.database_name }}</dd>
       <dt class="col-sm-3">Table</dt><dd class="col-sm-9">{{ job.table_name }}</dd>
       <dt class="col-sm-3">Sync mode</dt><dd class="col-sm-9">{{ job.sync_mode_label }}</dd>
+      <dt class="col-sm-3">Source filters</dt><dd class="col-sm-9">{% if job.filters %}{% for rule in job.filters %}<code>{{ rule.column }} {{ rule.operator }}{% if rule.value %} {{ rule.value }}{% endif %}</code>{% if not loop.last %}<span class="text-muted"> AND </span>{% endif %}{% endfor %}{% else %}<span class="text-muted">None</span>{% endif %}</dd>
+      <dt class="col-sm-3">Incremental sync</dt><dd class="col-sm-9">{% if job.incremental_column %}<code>{{ job.incremental_column }}</code> checkpointed after successful completion{% else %}<span class="text-muted">Full sync</span>{% endif %}</dd>
       <dt class="col-sm-3">Cycle sync</dt><dd class="col-sm-9">{{ 'Enabled' if job.cycle_sync else 'Disabled' }}</dd>
       <dt class="col-sm-3">Processed</dt><dd class="col-sm-9"><div class="d-flex align-items-center gap-2"><div class="progress flex-grow-1" aria-label="Rows processed"><div class="progress-bar" style="width:{{ job.progress_percent }}%"></div></div><span>{{ job.processed_count }} processed{% if job.source_count is not none %} / {{ job.source_count }} source{% endif %} ({{ job.progress_percent }}%)</span></div></dd>
       <dt class="col-sm-3">Duration</dt><dd class="col-sm-9">{{ job.duration_seconds|duration }}</dd>

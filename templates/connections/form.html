@@ -1,13 +1,16 @@
 {% extends 'base.html' %}
 {% block title %}{{ 'Edit' if item else 'Add' }} connection{% endblock %}
 {% block content %}
-<div class="page-header"><h1 class="page-title">{{ 'Edit' if item else 'Add' }} MySQL connection</h1><p class="page-subtitle">{% if item %}Leave password blank to keep the current password{% else %}Credentials are encrypted before storage{% endif %}</p></div>
+<div class="page-header"><h1 class="page-title">{{ 'Edit' if item else 'Add' }} database connection</h1><p class="page-subtitle">{% if item %}Leave password blank to keep the current password{% else %}Credentials are encrypted before storage{% endif %}</p></div>
 <form method="post" class="card card-body compact-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="row">
     <div class="col-md-6"><label class="form-label">Name</label><input class="form-control" name="name" value="{{ item.name if item else '' }}" required></div>
+    <div class="col-md-6"><label class="form-label">Database type</label><select class="form-select" name="database_type" id="database-type"><option value="mysql" {% if form_values.database_type == 'mysql' %}selected{% endif %}>MySQL</option><option value="postgresql" {% if form_values.database_type == 'postgresql' %}selected{% endif %}>PostgreSQL</option></select></div>
+    <div class="col-md-6"><label class="form-label">Connection role</label><select class="form-select" name="usage_role"><option value="both" {% if (item.usage_role if item else 'both') == 'both' %}selected{% endif %}>Source and target</option><option value="source" {% if item and item.usage_role == 'source' %}selected{% endif %}>Source only</option><option value="target" {% if item and item.usage_role == 'target' %}selected{% endif %}>Target only</option></select></div>
+    <div class="col-md-6"><label class="form-label">Environment</label><select class="form-select" name="environment"><option value="development" {% if (item.environment if item else 'development') == 'development' %}selected{% endif %}>Development</option><option value="staging" {% if item and item.environment == 'staging' %}selected{% endif %}>Staging</option><option value="production" {% if item and item.environment == 'production' %}selected{% endif %}>Production</option></select></div>
     <div class="col-md-6"><label class="form-label">Host</label><input class="form-control" name="host" value="{{ item.host if item else 'localhost' }}" required></div>
-    <div class="col-md-6"><label class="form-label">Port</label><input class="form-control" name="port" type="number" min="1" max="65535" value="{{ item.port if item else 3306 }}" required></div>
+    <div class="col-md-6"><label class="form-label">Port</label><input class="form-control" name="port" id="database-port" type="number" min="1" max="65535" value="{{ form_values.port if form_values.port else (item.port if item else 3306) }}" required></div>
     <div class="col-md-6"><label class="form-label">Database</label><input class="form-control" name="database_name" value="{{ item.database_name if item else '' }}" required></div>
     <div class="col-md-6"><label class="form-label">Username</label><input class="form-control" name="username" value="{{ item.username if item else '' }}" required></div>
     <div class="col-md-6"><label class="form-label">Password <span class="text-muted fw-normal">{{ 'leave blank to keep current' if item else 'optional' }}</span></label><input class="form-control" type="password" name="password" autocomplete="new-password"></div>
@@ -66,6 +69,9 @@
 </form>
 <script>
 (function () {
+  const databaseType = document.getElementById('database-type');
+  const databasePort = document.getElementById('database-port');
+  if (databaseType && databasePort) databaseType.addEventListener('change', function () { databasePort.value = databaseType.value === 'postgresql' ? 5432 : 3306; });
   const field = document.querySelector('textarea[name="fk_mapping_rules"]');
   if (!field) return;
   const toolsToggle = document.getElementById('show-mapping-tools');

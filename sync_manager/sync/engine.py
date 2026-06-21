@@ -1,18 +1,150 @@
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import hashlib
 import json
 import re
 
 from flask import current_app
-from sqlalchemy import MetaData, Table, create_engine, inspect, select, text, tuple_
+from sqlalchemy import Date, DateTime, Integer, MetaData, Table, and_, create_engine, inspect, or_, select, text, tuple_
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import JSON
 from sqlalchemy.engine import URL
 
 from .. import db
-from ..models import SyncJob
+from ..models import SyncCheckpoint, SyncJob, utcnow
 from ..security import decrypt_secret
 
 _LOOKUP_COLUMN_PRIORITY = ("username", "email", "name", "title", "slug", "code", "key", "identifier")
+_FILTER_OPERATORS = {"equals", "not_equals", "contains", "starts_with", "in", "between", "is_empty", "is_not_empty", "json_path_equals", "json_path_contains", "json_path_exists"}
+_SENSITIVE_COLUMN_MARKERS = ("password", "secret", "token", "api_key", "access_key", "private_key")
+
+
+def _preview_value(column_name, value):
+    if any(marker in column_name.lower() for marker in _SENSITIVE_COLUMN_MARKERS):
+        return "••••••"
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
+def _source_filter_clause(source_table, filter_rules, dialect_name=None):
+    """Build safe SQLAlchemy predicates from persisted filter rules; never accept SQL text."""
+    clauses = []
+    for rule in filter_rules or []:
+        if not isinstance(rule, dict):
+            raise RuntimeError("Invalid filter rule")
+        column_name = rule.get("column")
+        operator = rule.get("operator")
+        if column_name not in source_table.c or operator not in _FILTER_OPERATORS:
+            raise RuntimeError("Invalid filter column or operator")
+        column = source_table.c[column_name]
+        value = rule.get("value", "")
+        if operator.startswith("json_path_"):
+            path = [part.strip() for part in str(rule.get("json_path", "")).split(".") if part.strip()]
+            if dialect_name != "postgresql" or not isinstance(column.type, (JSON, JSONB)) or not path:
+                raise RuntimeError("JSON path filters require a PostgreSQL JSON or JSONB column and a JSON path")
+            expression = column[tuple(path)]
+            if operator == "json_path_exists":
+                clauses.append(expression.is_not(None))
+            elif operator == "json_path_equals":
+                clauses.append(expression.as_string() == value)
+            else:
+                try:
+                    json_value = json.loads(value)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("JSON path contains filters require valid JSON, for example {\"status\": \"open\"}") from exc
+                clauses.append(expression.contains(json_value))
+            continue
+        if operator == "equals": clauses.append(column == value)
+        elif operator == "not_equals": clauses.append(column != value)
+        elif operator == "contains": clauses.append(column.contains(value))
+        elif operator == "starts_with": clauses.append(column.startswith(value))
+        elif operator == "in": clauses.append(column.in_([item.strip() for item in str(value).split(",") if item.strip()]))
+        elif operator == "between":
+            values = [item.strip() for item in str(value).split(",", 1)]
+            if len(values) != 2 or not all(values): raise RuntimeError("Between filters require two comma-separated values")
+            clauses.append(column.between(values[0], values[1]))
+        elif operator == "is_empty": clauses.append((column.is_(None)) | (column == ""))
+        elif operator == "is_not_empty": clauses.append((column.is_not(None)) & (column != ""))
+    return clauses
+
+
+def _filter_signature(filter_rules):
+    return hashlib.sha256(json.dumps(filter_rules or [], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _cursor_value(column, value):
+    if column.type._type_affinity is DateTime:
+        return datetime.fromisoformat(value)
+    if column.type._type_affinity is Date:
+        return date.fromisoformat(value)
+    if column.type._type_affinity is Integer:
+        return int(value)
+    return value
+
+
+def _incremental_clause(source_table, source_config, target_config, table_name, filter_rules, incremental_column):
+    if not incremental_column:
+        return [], None
+    if incremental_column not in source_table.c:
+        raise RuntimeError("Incremental column '{}' does not exist on table '{}'".format(incremental_column, table_name))
+    pk_names = [column.name for column in source_table.primary_key.columns]
+    if len(pk_names) != 1:
+        raise RuntimeError("Incremental sync requires a table with one primary-key column")
+    column = source_table.c[incremental_column]
+    if column.type._type_affinity not in {DateTime, Date, Integer}:
+        raise RuntimeError("Incremental sync columns must be a date, datetime, or integer column")
+    _cursor_value(column, "0" if column.type._type_affinity is Integer else "1970-01-01")
+    checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
+        SyncCheckpoint.source_connection_id == source_config.id,
+        SyncCheckpoint.target_connection_id == target_config.id,
+        SyncCheckpoint.table_name == table_name,
+        SyncCheckpoint.filter_signature == _filter_signature(filter_rules),
+        SyncCheckpoint.incremental_column == incremental_column,
+    ))
+    if not checkpoint:
+        return [], None
+    cursor = _cursor_value(column, checkpoint.cursor_value)
+    pk_column = source_table.c[pk_names[0]]
+    return [or_(column > cursor, and_(column == cursor, pk_column > _cursor_value(pk_column, checkpoint.cursor_primary_key)))], checkpoint
+
+
+def _save_incremental_checkpoint(job, filter_rules, cursor_pair):
+    if not job.incremental_column or not cursor_pair:
+        return
+    value, primary_key = cursor_pair
+    signature = _filter_signature(filter_rules)
+    checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
+        SyncCheckpoint.source_connection_id == job.source_connection_id,
+        SyncCheckpoint.target_connection_id == job.target_connection_id,
+        SyncCheckpoint.table_name == job.table_name,
+        SyncCheckpoint.filter_signature == signature,
+        SyncCheckpoint.incremental_column == job.incremental_column,
+    ))
+    if checkpoint is None:
+        checkpoint = SyncCheckpoint(source_connection_id=job.source_connection_id, target_connection_id=job.target_connection_id, table_name=job.table_name, filter_signature=signature, incremental_column=job.incremental_column, cursor_value=str(value), cursor_primary_key=str(primary_key))
+        db.session.add(checkpoint)
+    else:
+        checkpoint.cursor_value, checkpoint.cursor_primary_key, checkpoint.updated_at = str(value), str(primary_key), utcnow()
+
+
+def incremental_checkpoint_status(source_id, target_id, table_filters, incremental_columns):
+    statuses = {}
+    for table_name, column_name in (incremental_columns or {}).items():
+        checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
+            SyncCheckpoint.source_connection_id == source_id,
+            SyncCheckpoint.target_connection_id == target_id,
+            SyncCheckpoint.table_name == table_name,
+            SyncCheckpoint.filter_signature == _filter_signature((table_filters or {}).get(table_name)),
+            SyncCheckpoint.incremental_column == column_name,
+        ))
+        statuses[table_name] = {
+            "column": column_name,
+            "cursor_value": checkpoint.cursor_value if checkpoint else None,
+            "cursor_primary_key": checkpoint.cursor_primary_key if checkpoint else None,
+            "updated_at": checkpoint.updated_at.isoformat() if checkpoint and checkpoint.updated_at else None,
+        }
+    return statuses
 
 
 def _load_mapping_rules(source_config):
@@ -61,16 +193,40 @@ def mapping_health(source_config, target_config, table_name):
 def connection_engine(config):
     if not config.is_enabled:
         raise RuntimeError("Database connection '{}' is disabled".format(config.name))
-    url = URL.create(
-        "mysql+pymysql",
-        username=config.username,
-        password=decrypt_secret(config.encrypted_password),
-        host=config.host,
-        port=config.port,
-        database=config.database_name,
-        query={"charset": "utf8mb4"},
-    )
-    return create_engine(url, pool_pre_ping=True, pool_recycle=1800)
+    database_type = getattr(config, "database_type", "mysql") or "mysql"
+    if database_type == "mysql":
+        url = URL.create("mysql+pymysql", username=config.username, password=decrypt_secret(config.encrypted_password), host=config.host, port=config.port, database=config.database_name, query={"charset": "utf8mb4"})
+        return create_engine(url, pool_pre_ping=True, pool_recycle=1800)
+    if database_type == "postgresql":
+        url = URL.create("postgresql+psycopg", username=config.username, password=decrypt_secret(config.encrypted_password), host=config.host, port=config.port, database=config.database_name)
+        return create_engine(url, pool_pre_ping=True, pool_recycle=1800, connect_args={"options": "-csearch_path=public"})
+    raise RuntimeError("Unsupported database type '{}' for connection '{}'".format(database_type, config.name))
+
+
+def _target_write_statement(target_table, rows, sync_mode, pk_names, dialect_name):
+    insert = postgresql_insert if dialect_name == "postgresql" else mysql_insert
+    statement = insert(target_table).values(rows)
+    update_columns = {column.name: statement.inserted[column.name] for column in target_table.columns if column.name not in pk_names}
+    if dialect_name == "postgresql":
+        if sync_mode == "insert_only" or not update_columns:
+            return statement.on_conflict_do_nothing(index_elements=pk_names), bool(update_columns)
+        return statement.on_conflict_do_update(index_elements=pk_names, set_=update_columns), True
+    if sync_mode == "insert_only" or not update_columns:
+        return statement.prefix_with("IGNORE"), bool(update_columns)
+    return statement.on_duplicate_key_update(**update_columns), True
+
+
+def _advance_postgresql_sequence(target, target_table):
+    pk_columns = list(target_table.primary_key.columns)
+    if len(pk_columns) != 1 or pk_columns[0].type._type_affinity is not Integer:
+        return
+    pk_name = pk_columns[0].name
+    sequence_name = target.execute(text("SELECT pg_get_serial_sequence(:table_name, :column_name)"), {"table_name": "public." + target_table.name, "column_name": pk_name}).scalar_one_or_none()
+    if not sequence_name:
+        return
+    preparer = target.dialect.identifier_preparer
+    max_value = target.execute(text("SELECT MAX({}) FROM {}".format(preparer.quote(pk_name), preparer.quote(target_table.name)))).scalar_one()
+    target.execute(text("SELECT setval(CAST(:sequence_name AS regclass), :value, :is_called)"), {"sequence_name": sequence_name, "value": max_value or 1, "is_called": max_value is not None})
 
 
 def discover_tables(source_config, target_config):
@@ -114,6 +270,7 @@ def discover_tables(source_config, target_config):
             {
                 "name": table_name,
                 "column_count": len(columns),
+                "filter_columns": [{"name": column["name"], "type": str(column.get("type", ""))} for column in columns],
                 "primary_key": primary_key,
                 "dependencies": dependencies,
                 "mapping_columns": mapping_columns,
@@ -626,15 +783,20 @@ def expand_tables_with_dependencies(source_config, table_names):
     return expanded
 
 
-def dry_run(source_config, target_config, table_name):
+def dry_run(source_config, target_config, table_name, filter_rules=None, incremental_column=None):
     source_engine = connection_engine(source_config)
     target_engine = connection_engine(target_config)
     metadata = MetaData()
     source_table = Table(table_name, metadata, autoload_with=source_engine)
     target_table = Table(table_name, MetaData(), autoload_with=target_engine)
     pk_names = [column.name for column in source_table.primary_key.columns]
+    try:
+        filter_clauses = _source_filter_clause(source_table, filter_rules, source_engine.dialect.name)
+        incremental_clauses, _ = _incremental_clause(source_table, source_config, target_config, table_name, filter_rules, incremental_column)
+    except RuntimeError as exc:
+        return {"errors": [str(exc)], "source_count": 0, "target_count": 0}
     with source_engine.connect() as source, target_engine.connect() as target:
-        source_count = source.execute(select(db.func.count()).select_from(source_table)).scalar_one()
+        source_count = source.execute(select(db.func.count()).select_from(source_table).where(*(filter_clauses + incremental_clauses))).scalar_one()
         target_count = target.execute(select(db.func.count()).select_from(target_table)).scalar_one()
         if source_count == 0:
             return {
@@ -645,17 +807,22 @@ def dry_run(source_config, target_config, table_name):
                 "existing_count": 0,
                 "empty": True,
             }
-        source_keys = set(source.execute(select(*(source_table.c[name] for name in pk_names))).all())
+        source_keys = set(source.execute(select(*(source_table.c[name] for name in pk_names)).where(*(filter_clauses + incremental_clauses))).all())
         target_keys = set(target.execute(select(*(target_table.c[name] for name in pk_names))).all())
+        preview_rows = [
+            {name: _preview_value(name, value) for name, value in row._mapping.items()}
+            for row in source.execute(select(source_table).where(*(filter_clauses + incremental_clauses)).order_by(*(source_table.c[name] for name in pk_names)).limit(10))
+        ]
     errors = validate_table(source_config, target_config, table_name)
     if errors:
-        return {"errors": errors, "source_count": source_count, "target_count": target_count}
+        return {"errors": errors, "source_count": source_count, "target_count": target_count, "preview_rows": preview_rows}
     return {
         "errors": [],
         "source_count": source_count,
         "target_count": target_count,
         "new_count": len(source_keys - target_keys),
         "existing_count": len(source_keys & target_keys),
+        "preview_rows": preview_rows,
     }
 
 
@@ -680,6 +847,8 @@ def synchronize(job, batch_size=500):
         raise RuntimeError("; ".join(errors))
     sync_mode = (job.sync_mode or "insert_only").strip().lower()
     cycle_sync = bool(job.cycle_sync)
+    if cycle_sync and (getattr(job.target, "database_type", "mysql") or "mysql") == "postgresql":
+        raise RuntimeError("Cyclic foreign-key synchronization is not supported for PostgreSQL targets.")
     with job_lock(job.source_connection_id, job.target_connection_id, job.table_name):
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -695,17 +864,25 @@ def synchronize(job, batch_size=500):
             mapping_rules=_load_mapping_rules(job.source),
         )
         pk_names = [column.name for column in source_table.primary_key.columns]
+        filter_clauses = _source_filter_clause(source_table, job.filters, source_engine.dialect.name)
+        incremental_clauses, _ = _incremental_clause(source_table, job.source, job.target, job.table_name, job.filters, job.incremental_column)
         with source_engine.connect() as source:
-            job.source_count = source.execute(select(db.func.count()).select_from(source_table)).scalar_one()
+            job.source_count = source.execute(select(db.func.count()).select_from(source_table).where(*(filter_clauses + incremental_clauses))).scalar_one()
         db.session.commit()
         offset = 0
+        wrote_target_rows = False
+        max_incremental_cursor = None
         try:
             while True:
-                query = select(source_table).order_by(*(source_table.c[name] for name in pk_names)).offset(offset).limit(batch_size)
+                order_columns = ([source_table.c[job.incremental_column]] if job.incremental_column else []) + [source_table.c[name] for name in pk_names]
+                query = select(source_table).where(*(filter_clauses + incremental_clauses)).order_by(*order_columns).offset(offset).limit(batch_size)
                 with source_engine.connect() as source:
                     source_rows = [dict(row._mapping) for row in source.execute(query)]
                 if not source_rows:
                     break
+                if job.incremental_column:
+                    candidate = max((row[job.incremental_column], row[pk_names[0]]) for row in source_rows)
+                    max_incremental_cursor = candidate if max_incremental_cursor is None or candidate > max_incremental_cursor else max_incremental_cursor
                 rows, skipped_rows = _remap_foreign_key_values(
                     source_engine,
                     target_engine,
@@ -744,29 +921,23 @@ def synchronize(job, batch_size=500):
                     existing_keys = set(
                         target.execute(select(*(target_table.c[name] for name in pk_names)).where(key_filter)).all()
                     )
-                statement = mysql_insert(target_table).values(rows)
+                target_dialect = target_engine.dialect.name
                 mysql_warnings = []
+                statement, has_update_columns = _target_write_statement(
+                    target_table, rows, sync_mode, pk_names, target_dialect
+                )
                 if sync_mode == "insert_only":
-                    statement = statement.prefix_with("IGNORE")
                     updated_count = 0
                     skipped_count = len(existing_keys)
                 else:
-                    update_columns = {
-                        column.name: statement.inserted[column.name]
-                        for column in target_table.columns
-                        if column.name not in pk_names
-                    }
-                    if update_columns:
-                        statement = statement.on_duplicate_key_update(**update_columns)
-                    else:
-                        statement = statement.prefix_with("IGNORE")
-                    updated_count = len(existing_keys) if update_columns else 0
-                    skipped_count = 0
+                    updated_count = len(existing_keys) if has_update_columns else 0
+                    skipped_count = len(existing_keys) if not has_update_columns else 0
                 with target_engine.begin() as target:
                     if cycle_sync and target.dialect.name == "mysql":
                         target.execute(text("SET FOREIGN_KEY_CHECKS=0"))
                     try:
                         result = target.execute(statement)
+                        wrote_target_rows = True
                         mysql_warnings = []
                         if sync_mode == "insert_only" and target.dialect.name == "mysql":
                             mysql_warnings = _collect_mysql_warnings(target)
@@ -779,46 +950,54 @@ def synchronize(job, batch_size=500):
                     ignored_by_db = max(0, expected_inserted - affected_count)
                     job.inserted_count += affected_count
                     job.updated_count += 0
-                    job.skipped_count += skipped_count
+                    job.skipped_count += skipped_count + (ignored_by_db if target_dialect == "postgresql" else 0)
                     if ignored_by_db:
-                        job.failed_count += ignored_by_db
-                        if mysql_warnings:
-                            for warning in mysql_warnings[:ignored_by_db]:
-                                _append_drop_detail(
-                                    job,
-                                    job.table_name,
-                                    "MySQL ignored row during insert-only sync: {}".format(warning),
-                                )
-                            if ignored_by_db > len(mysql_warnings):
+                        if target_dialect == "postgresql":
+                            _append_drop_detail(job, job.table_name, "PostgreSQL skipped {} insert-only row(s) due to primary-key conflicts.".format(ignored_by_db), count=ignored_by_db)
+                        else:
+                            job.failed_count += ignored_by_db
+                            if mysql_warnings:
+                                for warning in mysql_warnings[:ignored_by_db]:
+                                    _append_drop_detail(
+                                        job,
+                                        job.table_name,
+                                        "MySQL ignored row during insert-only sync: {}".format(warning),
+                                    )
+                                if ignored_by_db > len(mysql_warnings):
+                                    _append_drop_detail(
+                                        job,
+                                        job.table_name,
+                                        "MySQL ignored {} insert-only row(s) during insert-only sync after the preflight check.".format(
+                                            ignored_by_db - len(mysql_warnings)
+                                        ),
+                                        count=ignored_by_db - len(mysql_warnings),
+                                    )
+                            else:
                                 _append_drop_detail(
                                     job,
                                     job.table_name,
                                     "MySQL ignored {} insert-only row(s) during insert-only sync after the preflight check.".format(
-                                        ignored_by_db - len(mysql_warnings)
+                                        ignored_by_db
                                     ),
-                                    count=ignored_by_db - len(mysql_warnings),
+                                    count=ignored_by_db,
                                 )
-                        else:
-                            _append_drop_detail(
-                                job,
+                            current_app.logger.warning(
+                                "Synchronization job %s ignored %s insert-only row(s) from table %s after the preflight check.",
+                                job.id,
+                                ignored_by_db,
                                 job.table_name,
-                                "MySQL ignored {} insert-only row(s) during insert-only sync after the preflight check.".format(
-                                    ignored_by_db
-                                ),
-                                count=ignored_by_db,
                             )
-                        current_app.logger.warning(
-                            "Synchronization job %s ignored %s insert-only row(s) from table %s after the preflight check.",
-                            job.id,
-                            ignored_by_db,
-                            job.table_name,
-                        )
                 else:
                     job.inserted_count += len(keys) - len(existing_keys)
                     job.updated_count += updated_count
                     job.skipped_count += skipped_count
                 db.session.commit()
                 offset += len(source_rows)
+            if wrote_target_rows and target_engine.dialect.name == "postgresql":
+                with target_engine.begin() as target:
+                    _advance_postgresql_sequence(target, target_table)
+            if job.failed_count == 0:
+                _save_incremental_checkpoint(job, job.filters, max_incremental_cursor)
             job.status = "completed"
         except Exception as exc:
             job.status = "failed"

@@ -51,6 +51,25 @@ def test_admin_can_save_connection_with_empty_password(app, client):
         item = db.session.scalar(db.select(DatabaseConnection).filter_by(name="Local MySQL"))
         assert item.encrypted_password
         assert decrypt_secret(item.encrypted_password) == ""
+        assert item.database_type == "mysql"
+
+
+def test_admin_can_save_postgresql_connection_with_default_port(app, client):
+    client.post("/auth/login", data={"username": "admin", "password": "password"})
+    response = client.post(
+        "/connections/new",
+        data={
+            "name": "PostgreSQL endpoint", "database_type": "postgresql", "host": "db.example.test",
+            "database_name": "example", "username": "sync_user", "password": "secret",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    with app.app_context():
+        item = db.session.scalar(db.select(DatabaseConnection).filter_by(name="PostgreSQL endpoint"))
+        assert item.database_type == "postgresql"
+        assert item.port == 5432
+        assert decrypt_secret(item.encrypted_password) == "secret"
 
 
 def test_admin_can_save_connection_with_fk_mapping_rules(app, client):

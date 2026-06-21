@@ -70,10 +70,12 @@ def create_app(test_config=None):
     from .cli import register_commands
     register_commands(app)
 
-    from .models import NotificationSettings
+    from .models import NotificationSettings, SyncCheckpoint, SyncProfile
     from .notifications.service import init_notification_executor
     with app.app_context():
         NotificationSettings.__table__.create(db.engine, checkfirst=True)
+        SyncCheckpoint.__table__.create(db.engine, checkfirst=True)
+        SyncProfile.__table__.create(db.engine, checkfirst=True)
         if inspect(db.engine).has_table("user"):
             user_columns = {column["name"] for column in inspect(db.engine).get_columns("user")}
             if "is_active_account" not in user_columns:
@@ -86,6 +88,9 @@ def create_app(test_config=None):
                 column["name"] for column in inspect(db.engine).get_columns("database_connection")
             }
             connection_upgrades = {
+                "database_type": "ALTER TABLE database_connection ADD COLUMN database_type VARCHAR(20) NOT NULL DEFAULT 'mysql'",
+                "usage_role": "ALTER TABLE database_connection ADD COLUMN usage_role VARCHAR(20) NOT NULL DEFAULT 'both'",
+                "environment": "ALTER TABLE database_connection ADD COLUMN environment VARCHAR(20) NOT NULL DEFAULT 'development'",
                 "is_enabled": "ALTER TABLE database_connection ADD COLUMN is_enabled BOOLEAN NOT NULL DEFAULT 1",
                 "test_status": "ALTER TABLE database_connection ADD COLUMN test_status VARCHAR(20) NOT NULL DEFAULT 'untested'",
                 "last_tested_at": "ALTER TABLE database_connection ADD COLUMN last_tested_at DATETIME",
@@ -119,6 +124,12 @@ def create_app(test_config=None):
                     connection.execute(
                         text("ALTER TABLE sync_job ADD COLUMN cycle_sync BOOLEAN NOT NULL DEFAULT 0")
                     )
+            if "filter_rules" not in columns:
+                with db.engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE sync_job ADD COLUMN filter_rules TEXT"))
+            if "incremental_column" not in columns:
+                with db.engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE sync_job ADD COLUMN incremental_column VARCHAR(128)"))
     init_notification_executor(app)
 
     @app.template_filter("compact_datetime")

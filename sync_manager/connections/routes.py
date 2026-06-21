@@ -12,6 +12,32 @@ from ..sync.engine import connection_engine
 
 bp = Blueprint("connections", __name__, url_prefix="/connections")
 
+_DATABASE_TYPES = {"mysql": 3306, "postgresql": 5432}
+_USAGE_ROLES = {"source", "target", "both"}
+_ENVIRONMENTS = {"development", "staging", "production"}
+
+
+def _connection_form_values(item=None):
+    return {
+        "database_type": (request.form.get("database_type") if request.method == "POST" else getattr(item, "database_type", None)) or "mysql",
+        "port": request.form.get("port") if request.method == "POST" else getattr(item, "port", None),
+    }
+
+
+def _connection_fields():
+    database_type = request.form.get("database_type", "mysql").strip().lower()
+    if database_type not in _DATABASE_TYPES:
+        raise ValueError("Database type must be MySQL or PostgreSQL.")
+    raw_port = request.form.get("port", "").strip()
+    port = int(raw_port) if raw_port else _DATABASE_TYPES[database_type]
+    if not 1 <= port <= 65535:
+        raise ValueError("Port must be between 1 and 65535.")
+    usage_role = request.form.get("usage_role", "both").strip().lower()
+    environment = request.form.get("environment", "development").strip().lower()
+    if usage_role not in _USAGE_ROLES or environment not in _ENVIRONMENTS:
+        raise ValueError("Connection role or environment is invalid.")
+    return database_type, port, usage_role, environment
+
 
 def _mapping_rule_summary(raw):
     raw = raw or ""
@@ -52,18 +78,26 @@ def create():
         name = request.form["name"].strip()
         if db.session.scalar(db.select(DatabaseConnection).filter_by(name=name)):
             flash("Connection name already exists.", "danger")
-            return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(request.form.get("fk_mapping_rules", "")))
+            return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(request.form.get("fk_mapping_rules", "")), form_values=_connection_form_values())
         fk_mapping_rules = request.form.get("fk_mapping_rules", "").strip()
         if fk_mapping_rules:
             try:
                 json.loads(fk_mapping_rules)
             except json.JSONDecodeError:
                 flash("FK mapping rules must be valid JSON.", "danger")
-                return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(fk_mapping_rules))
+                return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(fk_mapping_rules), form_values=_connection_form_values())
+        try:
+            database_type, port, usage_role, environment = _connection_fields()
+        except (TypeError, ValueError) as exc:
+            flash(str(exc), "danger")
+            return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(fk_mapping_rules), form_values=_connection_form_values())
         item = DatabaseConnection(
             name=name,
+            database_type=database_type,
+            usage_role=usage_role,
+            environment=environment,
             host=request.form["host"].strip(),
-            port=int(request.form.get("port", 3306)),
+            port=port,
             database_name=request.form["database_name"].strip(),
             username=request.form["username"].strip(),
             encrypted_password=encrypt_secret(request.form.get("password", "")),
@@ -74,7 +108,7 @@ def create():
         record_audit("connection.created", item.name)
         flash("Connection saved.", "success")
         return redirect(url_for("connections.index"))
-    return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(""))
+    return render_template("connections/form.html", item=None, mapping_summary=_mapping_rule_summary(""), form_values=_connection_form_values())
 
 
 @bp.route("/<int:connection_id>/edit", methods=("GET", "POST"))
@@ -95,11 +129,19 @@ def edit(connection_id):
             return render_template(
                 "connections/form.html",
                 item=item,
-                mapping_summary=_mapping_rule_summary(request.form.get("fk_mapping_rules", item.fk_mapping_rules or "")),
+                mapping_summary=_mapping_rule_summary(request.form.get("fk_mapping_rules", item.fk_mapping_rules or "")), form_values=_connection_form_values(item),
             )
+        try:
+            database_type, port, usage_role, environment = _connection_fields()
+        except (TypeError, ValueError) as exc:
+            flash(str(exc), "danger")
+            return render_template("connections/form.html", item=item, mapping_summary=_mapping_rule_summary(request.form.get("fk_mapping_rules", item.fk_mapping_rules or "")), form_values=_connection_form_values(item))
         item.name = name
+        item.database_type = database_type
+        item.usage_role = usage_role
+        item.environment = environment
         item.host = request.form["host"].strip()
-        item.port = int(request.form.get("port", 3306))
+        item.port = port
         item.database_name = request.form["database_name"].strip()
         item.username = request.form["username"].strip()
         fk_mapping_rules = request.form.get("fk_mapping_rules", "").strip()
@@ -111,7 +153,7 @@ def edit(connection_id):
                 return render_template(
                     "connections/form.html",
                     item=item,
-                    mapping_summary=_mapping_rule_summary(fk_mapping_rules),
+                    mapping_summary=_mapping_rule_summary(fk_mapping_rules), form_values=_connection_form_values(item),
                 )
             item.fk_mapping_rules = fk_mapping_rules
         else:
@@ -125,7 +167,7 @@ def edit(connection_id):
         record_audit("connection.updated", item.name)
         flash("Connection updated.", "success")
         return redirect(url_for("connections.index"))
-    return render_template("connections/form.html", item=item, mapping_summary=_mapping_rule_summary(item.fk_mapping_rules))
+    return render_template("connections/form.html", item=item, mapping_summary=_mapping_rule_summary(item.fk_mapping_rules), form_values=_connection_form_values(item))
 
 
 @bp.post("/<int:connection_id>/test")

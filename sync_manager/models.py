@@ -44,6 +44,9 @@ def load_user(user_id):
 class DatabaseConnection(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False)
+    database_type = db.Column(db.String(20), nullable=False, default="mysql")
+    usage_role = db.Column(db.String(20), nullable=False, default="both")
+    environment = db.Column(db.String(20), nullable=False, default="development")
     host = db.Column(db.String(255), nullable=False)
     port = db.Column(db.Integer, nullable=False, default=3306)
     database_name = db.Column(db.String(100), nullable=False)
@@ -63,6 +66,8 @@ class SyncJob(db.Model):
     target_connection_id = db.Column(db.Integer, db.ForeignKey("database_connection.id"), nullable=False)
     table_name = db.Column(db.String(128), nullable=False)
     sync_mode = db.Column(db.String(20), nullable=False, default="insert_only")
+    filter_rules = db.Column(db.Text)
+    incremental_column = db.Column(db.String(128))
     cycle_sync = db.Column(db.Boolean, nullable=False, default=False)
     status = db.Column(db.String(30), nullable=False, default="pending")
     inserted_count = db.Column(db.Integer, nullable=False, default=0)
@@ -108,6 +113,16 @@ class SyncJob(db.Model):
         )
 
     @property
+    def filters(self):
+        if not self.filter_rules:
+            return []
+        try:
+            value = json.loads(self.filter_rules)
+        except Exception:
+            return []
+        return value if isinstance(value, list) else []
+
+    @property
     def progress_percent(self):
         if self.status == "completed":
             return 100
@@ -135,6 +150,50 @@ class AuditLog(db.Model):
     details = db.Column(db.Text)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     user = db.relationship("User")
+
+
+class SyncCheckpoint(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    source_connection_id = db.Column(db.Integer, db.ForeignKey("database_connection.id"), nullable=False)
+    target_connection_id = db.Column(db.Integer, db.ForeignKey("database_connection.id"), nullable=False)
+    table_name = db.Column(db.String(128), nullable=False)
+    filter_signature = db.Column(db.String(64), nullable=False, default="")
+    incremental_column = db.Column(db.String(128), nullable=False)
+    cursor_value = db.Column(db.Text, nullable=False)
+    cursor_primary_key = db.Column(db.Text, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (db.UniqueConstraint("source_connection_id", "target_connection_id", "table_name", "filter_signature", "incremental_column", name="uq_sync_checkpoint_scope"),)
+
+
+class SyncProfile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    source_connection_id = db.Column(db.Integer, db.ForeignKey("database_connection.id"), nullable=False)
+    target_connection_id = db.Column(db.Integer, db.ForeignKey("database_connection.id"), nullable=False)
+    table_names = db.Column(db.Text, nullable=False)
+    filter_rules = db.Column(db.Text)
+    incremental_columns = db.Column(db.Text)
+    sync_mode = db.Column(db.String(20), nullable=False, default="insert_only")
+    created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    source = db.relationship("DatabaseConnection", foreign_keys=[source_connection_id])
+    target = db.relationship("DatabaseConnection", foreign_keys=[target_connection_id])
+    created_by = db.relationship("User")
+
+    @property
+    def tables(self):
+        try: return json.loads(self.table_names)
+        except Exception: return []
+
+    @property
+    def table_filters(self):
+        try: return json.loads(self.filter_rules or "{}")
+        except Exception: return {}
+
+    @property
+    def table_incremental_columns(self):
+        try: return json.loads(self.incremental_columns or "{}")
+        except Exception: return {}
 
 
 class NotificationSettings(db.Model):

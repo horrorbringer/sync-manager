@@ -1,12 +1,15 @@
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+import csv
+import io
+import json
 
 from .. import db
 from ..audit import record_audit
-from ..models import DatabaseConnection, SyncJob
+from ..models import DatabaseConnection, SyncJob, SyncProfile
 from ..notifications.service import notify_async
 from ..security import roles_required
-from .engine import dependency_report, discover_tables, dry_run, expand_tables_with_dependencies, validate_table
+from .engine import dependency_report, discover_tables, dry_run, expand_tables_with_dependencies, incremental_checkpoint_status, validate_table
 from .tasks import enqueue_job
 
 bp = Blueprint("sync", __name__, url_prefix="/sync")
@@ -31,6 +34,15 @@ def _is_cycle_only_error(table_name, errors):
     return all(str(error).startswith(prefix) for error in errors)
 
 
+def _postgresql_cycle_error(target):
+    return (
+        "Cyclic foreign-key synchronization is not supported for PostgreSQL targets. "
+        "Use a MySQL target or resolve the cycle before synchronizing."
+        if (getattr(target, "database_type", "mysql") or "mysql") == "postgresql"
+        else None
+    )
+
+
 def _is_empty_preview(result):
     return bool(result and result.get("empty"))
 
@@ -45,6 +57,49 @@ def _selected_table_names():
     if manual_name:
         names.append(manual_name)
     return list(dict.fromkeys(name.strip() for name in names if name.strip()))
+
+
+def _selected_table_filters():
+    raw = request.form.get("table_filter_rules", "").strip()
+    if not raw:
+        return {}
+    filter_error = None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("Table filters must be valid data.")
+    if not isinstance(value, dict):
+        raise ValueError("Table filters must be grouped by table.")
+    filters = {}
+    for table_name, rules in value.items():
+        if not isinstance(table_name, str) or not isinstance(rules, list):
+            raise ValueError("Invalid table filter configuration.")
+        clean_rules = [
+            {"column": str(rule.get("column", "")).strip(), "operator": str(rule.get("operator", "")).strip(), "value": str(rule.get("value", "")).strip(), "json_path": str(rule.get("json_path", "")).strip()}
+            for rule in rules if isinstance(rule, dict) and str(rule.get("column", "")).strip()
+        ]
+        if clean_rules:
+            filters[table_name] = clean_rules
+    return filters
+
+
+def _selected_incremental_columns():
+    raw = request.form.get("table_incremental_columns", "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("Incremental settings must be valid data.")
+    if not isinstance(value, dict) or not all(isinstance(table, str) and isinstance(column, str) for table, column in value.items()):
+        raise ValueError("Invalid incremental table configuration.")
+    return {table: column for table, column in value.items() if column}
+
+
+def _dry_run_with_filters(source, target, table_name, filter_rules, incremental_column=None):
+    if filter_rules or incremental_column:
+        return dry_run(source, target, table_name, filter_rules=filter_rules, incremental_column=incremental_column)
+    return dry_run(source, target, table_name)
 
 
 def _all_table_names(table_details):
@@ -93,7 +148,14 @@ def _render_sync_form(
     selected_tables,
     dependency_state=None,
     selected_sync_mode="insert_only",
+    selected_table_filters=None,
+    selected_incremental_columns=None,
 ):
+    table_filters = selected_table_filters if selected_table_filters is not None else _selected_table_filters()
+    incremental_columns = selected_incremental_columns if selected_incremental_columns is not None else _selected_incremental_columns()
+    checkpoint_statuses = incremental_checkpoint_status(selected_source_id, selected_target_id, table_filters, incremental_columns) if selected_source_id and selected_target_id else {}
+    profile_id = request.args.get("profile_id", request.form.get("profile_id"), type=int)
+    active_profile = db.session.get(SyncProfile, profile_id) if profile_id else None
     return render_template(
         "sync/form.html",
         connections=connections,
@@ -104,6 +166,11 @@ def _render_sync_form(
         selected_tables=selected_tables,
         dependency_state=dependency_state,
         selected_sync_mode=selected_sync_mode,
+        selected_table_filters=table_filters,
+        selected_incremental_columns=incremental_columns,
+        checkpoint_statuses=checkpoint_statuses,
+        profiles=db.session.scalars(db.select(SyncProfile).where(SyncProfile.created_by_id == current_user.id).order_by(SyncProfile.name)).all(),
+        active_profile=active_profile if active_profile and active_profile.created_by_id == current_user.id else None,
     )
 
 
@@ -120,13 +187,73 @@ def create():
     selected_target_id = request.form.get("target_id", type=int)
     selected_tables = _selected_table_names()
     selected_sync_mode = request.form.get("sync_mode", "insert_only").strip().lower()
+    dependency_state = None
+    filter_error = None
+    try:
+        selected_table_filters = _selected_table_filters()
+        selected_incremental_columns = _selected_incremental_columns()
+        unknown_filter_tables = sorted(set(selected_table_filters) - set(selected_tables))
+        unknown_incremental_tables = sorted(set(selected_incremental_columns) - set(selected_tables))
+        if unknown_filter_tables or unknown_incremental_tables:
+            raise ValueError("Filters were supplied for unselected tables: {}".format(", ".join(unknown_filter_tables)))
+    except ValueError as exc:
+        filter_error = str(exc)
+        selected_table_filters = {}
+        selected_incremental_columns = {}
     if selected_sync_mode not in {"upsert", "insert_only"}:
         selected_sync_mode = "insert_only"
-    dependency_state = None
+    if request.method == "GET" and request.args.get("profile_id", type=int):
+        profile = db.get_or_404(SyncProfile, request.args.get("profile_id", type=int))
+        if profile.created_by_id != current_user.id:
+            return ("Not found", 404)
+        selected_source_id, selected_target_id = profile.source_connection_id, profile.target_connection_id
+        selected_tables, selected_sync_mode = profile.tables, profile.sync_mode
+        selected_table_filters, selected_incremental_columns = profile.table_filters, profile.table_incremental_columns
+        try:
+            table_details = discover_tables(profile.source, profile.target)
+            dependency_state = dependency_report(profile.source, selected_tables) if selected_tables else None
+        except Exception as exc:
+            flash("Profile loaded, but source tables could not be discovered: {}".format(exc), "warning")
     if request.method == "POST":
         source = db.get_or_404(DatabaseConnection, selected_source_id)
         target = db.get_or_404(DatabaseConnection, selected_target_id)
         action = request.form.get("action")
+        if source.usage_role == "target" or target.usage_role == "source":
+            flash("Connection roles do not allow this direction. Choose a source-capable source and target-capable target.", "danger")
+            table_details = discover_tables(source, target)
+            return _render_sync_form(connections, results, table_details, selected_source_id, selected_target_id, selected_tables, selected_sync_mode=selected_sync_mode, selected_table_filters=selected_table_filters, selected_incremental_columns=selected_incremental_columns)
+        if action in {"execute", "sync_all"} and target.environment == "production" and request.form.get("target_confirmation", "").strip() != target.name:
+            flash("Type the Production target connection name exactly before running synchronization.", "danger")
+            table_details = discover_tables(source, target)
+            return _render_sync_form(connections, results, table_details, selected_source_id, selected_target_id, selected_tables, selected_sync_mode=selected_sync_mode, selected_table_filters=selected_table_filters, selected_incremental_columns=selected_incremental_columns)
+        if action == "save_profile":
+            name = request.form.get("profile_name", "").strip()
+            if not name or not selected_tables:
+                flash("Provide a profile name and select at least one table.", "danger")
+                table_details = discover_tables(source, target)
+                return _render_sync_form(connections, results, table_details, selected_source_id, selected_target_id, selected_tables, selected_sync_mode=selected_sync_mode, selected_table_filters=selected_table_filters, selected_incremental_columns=selected_incremental_columns)
+            profile_id = request.form.get("profile_id", type=int)
+            profile = db.session.get(SyncProfile, profile_id) if profile_id else None
+            if profile and profile.created_by_id != current_user.id:
+                return ("Not found", 404)
+            if profile is None:
+                profile = SyncProfile(created_by=current_user)
+                db.session.add(profile)
+            profile.name, profile.source, profile.target = name, source, target
+            profile.table_names, profile.filter_rules = json.dumps(selected_tables), json.dumps(selected_table_filters)
+            profile.incremental_columns, profile.sync_mode = json.dumps(selected_incremental_columns), selected_sync_mode
+            db.session.commit()
+            record_audit("sync.profile_saved", "profile={} tables={}".format(profile.id, ",".join(selected_tables)))
+            flash("Synchronization profile updated." if profile_id else "Synchronization profile saved.", "success")
+            return redirect(url_for("sync.create", profile_id=profile.id))
+        if filter_error:
+            flash(filter_error, "danger")
+            table_details = discover_tables(source, target)
+            return _render_sync_form(connections, results, table_details, selected_source_id, selected_target_id, selected_tables, selected_sync_mode=selected_sync_mode)
+        if selected_table_filters and action == "sync_all":
+            flash("Bulk sync all tables does not use table filters. Select the tables you want to filter instead.", "danger")
+            table_details = discover_tables(source, target)
+            return _render_sync_form(connections, results, table_details, selected_source_id, selected_target_id, selected_tables, selected_sync_mode=selected_sync_mode, selected_table_filters=selected_table_filters)
         if not action:
             flash("Select an action before submitting the synchronization form.", "warning")
             table_details = discover_tables(source, target)
@@ -168,14 +295,14 @@ def create():
             if not selected_tables:
                 flash("No tables were found in source database '{}'.".format(source.database_name), "warning")
             else:
-                selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables)
+                selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
                 dependency_state = dependency_report(source, selected_tables)
                 cycle_tables = dependency_state["cycle_tables"]
                 skipped_empty_tables = []
                 skipped_noop_tables = []
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_preview = dry_run(source, target, table_name)
+                        table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
                     except Exception as exc:
                         table_preview = {"errors": [str(exc)]}
                     if _is_empty_preview(table_preview):
@@ -205,6 +332,8 @@ def create():
                         skipped_noop_tables.append(table_name)
                         continue
                     errors = list(table_preview.get("errors") or [])
+                    if _postgresql_cycle_error(target):
+                        errors.append(_postgresql_cycle_error(target))
                     for error in validate_table(source, target, table_name, selected_tables=selected_tables):
                         if error not in errors:
                             errors.append(error)
@@ -228,6 +357,8 @@ def create():
                         target=target,
                         table_name=table_name,
                         sync_mode=selected_sync_mode,
+                        filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
+                        incremental_column=selected_incremental_columns.get(table_name),
                         cycle_sync=False,
                         initiated_by=current_user,
                     )
@@ -249,6 +380,8 @@ def create():
                         target=target,
                         table_name=table_name,
                         sync_mode=selected_sync_mode,
+                        filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
+                        incremental_column=selected_incremental_columns.get(table_name),
                         cycle_sync=True,
                         initiated_by=current_user,
                     )
@@ -312,19 +445,19 @@ def create():
                     dependency_state=dependency_state,
                     selected_sync_mode=selected_sync_mode,
                 )
-        elif action == "dry_run":
+        elif action in {"dry_run", "export_report"}:
             table_details = discover_tables(source, target)
             if not selected_tables:
                 flash("Select at least one source table before validation.", "danger")
             else:
-                selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables)
+                selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
                 dependency_state = dependency_report(source, selected_tables)
                 cycle_tables = dependency_state["cycle_tables"]
                 skipped_empty_tables = []
                 skipped_noop_tables = []
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_result = dry_run(source, target, table_name)
+                        table_result = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
                     except Exception as exc:
                         table_result = {"errors": [str(exc)]}
                     if _is_empty_preview(table_result):
@@ -346,6 +479,8 @@ def create():
                         skipped_noop_tables.append(table_name)
                         continue
                     errors = list(table_result.get("errors") or [])
+                    if _postgresql_cycle_error(target):
+                        errors.append(_postgresql_cycle_error(target))
                     for error in validate_table(source, target, table_name, selected_tables=selected_tables):
                         if error not in errors:
                             errors.append(error)
@@ -378,6 +513,16 @@ def create():
                         ),
                         "info",
                     )
+                if action == "export_report":
+                    output = io.StringIO()
+                    writer = csv.writer(output)
+                    writer.writerow(["table", "filters", "incremental_column", "checkpoint", "source_count", "target_count", "new_count", "existing_count", "errors"])
+                    statuses = incremental_checkpoint_status(source.id, target.id, selected_table_filters, selected_incremental_columns)
+                    for item in results:
+                        table_name, result = item["table"], item["result"]
+                        checkpoint = statuses.get(table_name) or {}
+                        writer.writerow([table_name, json.dumps(selected_table_filters.get(table_name, [])), selected_incremental_columns.get(table_name, ""), checkpoint.get("cursor_value", ""), result.get("source_count", ""), result.get("target_count", ""), result.get("new_count", ""), result.get("existing_count", ""), "; ".join(result.get("errors", []))])
+                    return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=sync-validation-report.csv"})
         elif action == "execute":
             if not selected_tables:
                 flash("Select at least one source table before running synchronization.", "danger")
@@ -392,14 +537,14 @@ def create():
                     dependency_state=dependency_state,
                     selected_sync_mode=selected_sync_mode,
                 )
-            selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables)
+            selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
             dependency_state = dependency_report(source, selected_tables)
             cycle_tables = dependency_state["cycle_tables"]
             skipped_empty_tables = []
             skipped_noop_tables = []
             for table_name in dependency_state["ordered_tables"]:
                 try:
-                    table_preview = dry_run(source, target, table_name)
+                    table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
                 except Exception as exc:
                     table_preview = {"errors": [str(exc)]}
                 if _is_empty_preview(table_preview):
@@ -429,6 +574,8 @@ def create():
                     skipped_noop_tables.append(table_name)
                     continue
                 errors = list(table_preview.get("errors") or [])
+                if _postgresql_cycle_error(target):
+                    errors.append(_postgresql_cycle_error(target))
                 for error in validate_table(source, target, table_name, selected_tables=selected_tables):
                     if error not in errors:
                         errors.append(error)
@@ -452,6 +599,8 @@ def create():
                     target=target,
                     table_name=table_name,
                     sync_mode=selected_sync_mode,
+                    filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
+                    incremental_column=selected_incremental_columns.get(table_name),
                     cycle_sync=False,
                     initiated_by=current_user,
                 )
@@ -473,6 +622,8 @@ def create():
                     target=target,
                     table_name=table_name,
                     sync_mode=selected_sync_mode,
+                    filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
+                    incremental_column=selected_incremental_columns.get(table_name),
                     cycle_sync=True,
                     initiated_by=current_user,
                 )
@@ -562,6 +713,42 @@ def create():
     )
 
 
+@bp.get("/profiles")
+@login_required
+@roles_required("administrator", "operator")
+def profiles():
+    items = db.session.scalars(db.select(SyncProfile).where(SyncProfile.created_by_id == current_user.id).order_by(SyncProfile.name)).all()
+    return render_template("sync/profiles.html", profiles=items)
+
+
+@bp.post("/profiles/<int:profile_id>/duplicate")
+@login_required
+@roles_required("administrator", "operator")
+def duplicate_profile(profile_id):
+    original = db.get_or_404(SyncProfile, profile_id)
+    if original.created_by_id != current_user.id:
+        return ("Not found", 404)
+    copy = SyncProfile(name="{} (copy)".format(original.name), source=original.source, target=original.target, table_names=original.table_names, filter_rules=original.filter_rules, incremental_columns=original.incremental_columns, sync_mode=original.sync_mode, created_by=current_user)
+    db.session.add(copy); db.session.commit()
+    record_audit("sync.profile_duplicated", "profile={} copy={}".format(original.id, copy.id))
+    flash("Profile duplicated.", "success")
+    return redirect(url_for("sync.profiles"))
+
+
+@bp.post("/profiles/<int:profile_id>/delete")
+@login_required
+@roles_required("administrator", "operator")
+def delete_profile(profile_id):
+    profile = db.get_or_404(SyncProfile, profile_id)
+    if profile.created_by_id != current_user.id:
+        return ("Not found", 404)
+    name = profile.name
+    db.session.delete(profile); db.session.commit()
+    record_audit("sync.profile_deleted", "profile={} name={}".format(profile_id, name))
+    flash("Profile deleted.", "success")
+    return redirect(url_for("sync.profiles"))
+
+
 @bp.get("/jobs/<int:job_id>")
 @login_required
 def job_detail(job_id):
@@ -616,6 +803,8 @@ def retry_job(job_id):
         target=original.target,
         table_name=original.table_name,
         sync_mode=original.sync_mode,
+        filter_rules=original.filter_rules,
+        incremental_column=original.incremental_column,
         cycle_sync=original.cycle_sync,
         initiated_by=current_user,
     )

@@ -2,11 +2,11 @@
 {% from '_icons.html' import icon %}
 {% block title %}Connections{% endblock %}
 {% block content %}
-<div class="page-header d-flex justify-content-between align-items-start"><div><h1 class="page-title">Connections</h1><p class="page-subtitle">MySQL source and target endpoints</p></div>{% if current_user.role == 'administrator' %}<a class="btn btn-primary d-flex align-items-center gap-2" href="{{ url_for('connections.create') }}">{{ icon('plus', 16) }} Add connection</a>{% endif %}</div>
-<div class="table-panel table-responsive"><table class="table table-hover"><thead><tr><th>Name</th><th>Endpoint</th><th>Database</th><th>Account</th><th>State</th><th>Last test</th><th class="text-end">Actions</th></tr></thead><tbody>
+<div class="page-header d-flex justify-content-between align-items-start"><div><h1 class="page-title">Connections</h1><p class="page-subtitle">Database source and target endpoints</p></div>{% if current_user.role == 'administrator' %}<a class="btn btn-primary d-flex align-items-center gap-2" href="{{ url_for('connections.create') }}">{{ icon('plus', 16) }} Add connection</a>{% endif %}</div>
+<div class="table-panel table-responsive"><table class="table table-hover"><thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Environment</th><th>Endpoint</th><th>Database</th><th>Account</th><th>State</th><th>Last test</th><th class="text-end">Actions</th></tr></thead><tbody>
 {% for item in connections %}<tr>
   <td><div class="d-flex align-items-center gap-2">{{ icon('database', 18) }}<strong>{{ item.name }}</strong></div></td>
-  <td>{{ item.host }}:{{ item.port }}</td><td>{{ item.database_name }}</td><td>{{ item.username }}</td>
+  <td>{{ 'PostgreSQL' if item.database_type == 'postgresql' else 'MySQL' }}</td><td>{{ item.usage_role|replace('_', ' ')|title }}</td><td>{{ item.environment|title }}</td><td>{{ item.host }}:{{ item.port }}</td><td>{{ item.database_name }}</td><td>{{ item.username }}</td>
   <td>
     <span class="badge text-bg-{{ 'success' if item.is_enabled else 'secondary' }}">{{ 'enabled' if item.is_enabled else 'disabled' }}</span>
     <div class="small mt-1">
@@ -30,6 +30,6 @@
     <form method="post" action="{{ url_for('connections.delete', connection_id=item.id) }}" onsubmit="return confirm('Delete this unused connection?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button danger" title="Delete connection">{{ icon('trash') }}<span>Delete</span></button></form>
     {% endif %}
   </div></td>
-</tr>{% else %}<tr><td class="empty-state" colspan="7">No connections configured.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td class="empty-state" colspan="10">No connections configured.</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}

@@ -11,7 +11,7 @@
     <p class="page-subtitle">Copy one table from a source database to a target database.</p>
     <div class="sync-hint">FKs copy directly by default.</div>
   </div>
-  <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Cancel</a>
+  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('sync.profiles') }}">Profiles</a><a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Cancel</a></div>
 </div>
 
 {% if connections|length < 2 %}
@@ -24,6 +24,12 @@
 <form method="post" class="sync-builder" id="sync-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="action" value="execute" id="sync-action">
+  <input type="hidden" name="profile_id" value="{{ request.args.get('profile_id', request.form.get('profile_id', '')) }}">
+  {% if profiles %}<div class="card card-body mb-3"><label class="form-label" for="sync-profile">Saved profile</label><select class="form-select" id="sync-profile"><option value="">Start a new setup</option>{% for profile in profiles %}<option value="{{ profile.id }}">{{ profile.name }}</option>{% endfor %}</select></div>{% endif %}
+  <aside class="card card-body mb-3 sticky-top" id="sync-summary" style="top:1rem; z-index:10">
+    <div class="d-flex justify-content-between align-items-center"><strong>Sync summary</strong><span class="badge text-bg-secondary" id="summary-ready-state">Not ready</span></div>
+    <dl class="row small mb-0 mt-2"><dt class="col-4">Direction</dt><dd class="col-8" id="summary-direction">Choose connections</dd><dt class="col-4">Tables</dt><dd class="col-8" id="summary-tables">None selected</dd><dt class="col-4">Filters</dt><dd class="col-8" id="summary-filters">None</dd><dt class="col-4">Incremental</dt><dd class="col-8" id="summary-incremental">Full sync</dd><dt class="col-4">Mode</dt><dd class="col-8" id="summary-mode">Add new records only</dd></dl>
+  </aside>
 
   <section class="card sync-step">
     <div class="sync-step-number">1</div>
@@ -36,7 +42,7 @@
         <div class="connection-picker">
           <label class="form-label" for="source-id">Source connection</label>
           <select class="form-select" id="source-id" name="source_id" required>
-            {% for item in connections %}<option value="{{ item.id }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" {% if selected_source_id == item.id or (not selected_source_id and loop.first) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
+            {% for item in connections %}<option value="{{ item.id }}" data-name="{{ item.name }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" data-environment="{{ item.environment }}" {% if selected_source_id == item.id or (not selected_source_id and loop.first) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
           </select>
           <div class="connection-summary" id="source-summary"></div>
         </div>
@@ -48,7 +54,7 @@
         <div class="connection-picker">
           <label class="form-label" for="target-id">Target connection</label>
           <select class="form-select" id="target-id" name="target_id" required>
-            {% for item in connections %}<option value="{{ item.id }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" {% if selected_target_id == item.id or (not selected_target_id and loop.index == 2) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
+            {% for item in connections %}<option value="{{ item.id }}" data-name="{{ item.name }}" data-host="{{ item.host }}:{{ item.port }}" data-database="{{ item.database_name }}" data-environment="{{ item.environment }}" {% if selected_target_id == item.id or (not selected_target_id and loop.index == 2) %}selected{% endif %}>{{ item.name }} / {{ item.database_name }}</option>{% endfor %}
           </select>
           <div class="connection-summary" id="target-summary"></div>
         </div>
@@ -91,7 +97,7 @@
         </div>
         <div class="table-picker-list" id="table-picker-list" aria-label="Source tables">
           {% for table in table_details %}
-          <label class="table-picker-option {% if table.name in selected_tables %}selected{% endif %}" data-table-name="{{ table.name }}" data-search="{{ table.name|lower }} {{ table.primary_key|default([])|join(' ')|lower }} {{ table.dependencies|default([])|join(' ')|lower }}">
+          <label class="table-picker-option {% if table.name in selected_tables %}selected{% endif %}" data-table-name="{{ table.name }}" data-dependencies="{{ table.dependencies|default([])|join('|') }}" data-filter-columns='{{ table.filter_columns|default([])|tojson }}' data-search="{{ table.name|lower }} {{ table.primary_key|default([])|join(' ')|lower }} {{ table.dependencies|default([])|join(' ')|lower }}">
             <input class="form-check-input table-checkbox" type="checkbox" name="table_names" value="{{ table.name }}" {% if table.name in selected_tables %}checked{% endif %}>
             <span class="table-option-main"><strong>{{ table.name }}</strong><small>{{ table.column_count }} column{{ '' if table.column_count == 1 else 's' }}</small></span>
             <span class="table-option-meta">
@@ -119,6 +125,7 @@
         </div>
         {% endif %}
         <div class="table-picker-empty d-none" id="table-picker-empty">No tables match your search.</div>
+        <div class="sync-notice sync-notice-warning d-none mt-2" id="dependency-guidance"><div><strong>Required parent tables are not selected</strong><p class="mb-0" id="dependency-guidance-text"></p></div><button type="button" class="btn btn-outline-secondary btn-sm" id="add-parent-tables">Add parent tables</button></div>
         <div class="table-picker-stale d-none" id="table-picker-stale">The source or target connection changed. Discover tables again to refresh this list.</div>
         <div class="selected-table-summary {% if not selected_tables %}d-none{% endif %}" id="selected-table-summary"><span>Ready for validation</span><strong id="selected-table-label">{{ selected_tables|length }} table{{ '' if selected_tables|length == 1 else 's' }} selected</strong></div>
       </div>
@@ -135,6 +142,20 @@
 
   <section class="card sync-step">
     <div class="sync-step-number">3</div>
+    <div class="sync-step-content">
+      <div class="sync-step-heading"><div><h2>Optional source filters</h2><p>Each selected table can have its own conditions. Select dependent parent tables explicitly to keep foreign keys safe.</p></div></div>
+      <input type="hidden" name="table_filter_rules" id="table-filter-rules" value='{{ selected_table_filters|tojson }}'>
+      <input type="hidden" name="table_incremental_columns" id="table-incremental-columns" value='{{ selected_incremental_columns|tojson }}'>
+      <div id="table-filter-editors"></div>
+      {% if checkpoint_statuses %}
+      <div class="mt-3 small"><strong>Incremental checkpoints</strong>{% for table_name, checkpoint in checkpoint_statuses.items() %}<div class="mt-1"><code>{{ table_name }}.{{ checkpoint.column }}</code>: {% if checkpoint.cursor_value is not none %}last successful value <code>{{ checkpoint.cursor_value }}</code>, primary key <code>{{ checkpoint.cursor_primary_key }}</code>{% else %}<span class="text-muted">no successful checkpoint yet; the next run starts from the beginning</span>{% endif %}</div>{% endfor %}</div>
+      {% endif %}
+      <div class="form-text">Conditions within each table are combined with AND. For PostgreSQL JSON/JSONB, choose a JSON-path condition and enter paths such as <code>customer.id</code>.</div>
+    </div>
+  </section>
+
+  <section class="card sync-step">
+    <div class="sync-step-number">4</div>
     <div class="sync-step-content">
       <div class="sync-step-heading sync-run-heading">
         <div><h2>Validate and run</h2><p>Check schema compatibility and record counts before {{ 'running the synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'creating the background job' }}.</p></div>
@@ -175,8 +196,12 @@
           </div>
         </div>
       </div>
+      <div class="sync-notice sync-notice-warning d-none mt-3" id="production-confirmation"><div><strong>Production target confirmation</strong><p class="mb-1">Type the target connection name to enable synchronization.</p><input class="form-control" name="target_confirmation" id="target-confirmation" placeholder="Target connection name"></div></div>
       <div class="sync-actions">
         <button type="submit" class="btn btn-outline-primary d-inline-flex align-items-center gap-2" id="dry-run-button" data-action="dry_run">{{ icon('test', 17) }} Run validation</button>
+        <button type="submit" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" id="export-report-button" data-action="export_report">Download validation report</button>
+        <input class="form-control" style="max-width:220px" name="profile_name" value="{{ active_profile.name if active_profile else '' }}" placeholder="Profile name">
+        <button type="submit" class="btn btn-outline-secondary" id="save-profile-button" data-action="save_profile">Save profile</button>
         <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-2" id="queue-button" data-action="execute" onclick="return confirm('{{ 'Run' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue' }} this one-way synchronization? {% if selected_sync_mode == 'insert_only' %}Existing target rows will be ignored.{% else %}Existing target rows may be updated.{% endif %}')">{{ icon('play', 16) }} {{ 'Run synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue synchronization' }}</button>
       </div>
       <div class="sync-submit-state d-none" id="sync-submit-state">
@@ -205,6 +230,9 @@
       <ul>{% for error in item.result.errors %}<li>{{ error }}</li>{% endfor %}</ul>
       {% else %}
       <div class="bulk-validation-metrics"><span>Source <strong>{{ item.result.source_count }}</strong></span><span>Target <strong>{{ item.result.target_count }}</strong></span><span>New <strong>{{ item.result.new_count }}</strong></span><span>Existing <strong>{{ item.result.existing_count }}</strong></span></div>
+      {% if item.result.preview_rows %}
+      <details class="mt-2"><summary>Preview first {{ item.result.preview_rows|length }} matching source rows</summary><div class="table-responsive mt-2"><table class="table table-sm"><thead><tr>{% for column in item.result.preview_rows[0].keys() %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in item.result.preview_rows %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div><div class="small text-muted">Sensitive columns are masked.</div></details>
+      {% endif %}
       {% endif %}
     </div>
     {% endfor %}
@@ -222,11 +250,20 @@
   const actionInput = document.getElementById('sync-action');
   const error = document.getElementById('same-connection-error');
   const dryRun = document.getElementById('dry-run-button');
+  const exportReport = document.getElementById('export-report-button');
   const queue = document.getElementById('queue-button');
   const bulkSync = document.getElementById('bulk-sync-button');
+  const saveProfile = document.getElementById('save-profile-button');
+  const profileSelect = document.getElementById('sync-profile');
   const submitState = document.getElementById('sync-submit-state');
   const submitText = document.getElementById('sync-submit-text');
   const tablePicker = document.querySelector('.table-picker');
+  document.querySelectorAll('[data-action]').forEach(function (button) {
+    button.addEventListener('click', function () { if (actionInput) actionInput.value = button.dataset.action; });
+  });
+  const syncSummary = document.getElementById('sync-summary');
+  const productionConfirmation = document.getElementById('production-confirmation');
+  const targetConfirmation = document.getElementById('target-confirmation');
   const tableSearch = document.getElementById('table-search');
   const tableOptions = Array.from(document.querySelectorAll('.table-picker-option'));
   const tableCheckboxes = Array.from(document.querySelectorAll('.table-checkbox'));
@@ -237,6 +274,62 @@
   const emptyState = document.getElementById('table-picker-empty');
   const staleState = document.getElementById('table-picker-stale');
   const cyclicTables = tablePicker && tablePicker.dataset.cyclicTables ? tablePicker.dataset.cyclicTables.split('|').filter(Boolean) : [];
+  const dependencyGuidance = document.getElementById('dependency-guidance');
+  const dependencyGuidanceText = document.getElementById('dependency-guidance-text');
+  const addParentTables = document.getElementById('add-parent-tables');
+  const tableFilterInput = document.getElementById('table-filter-rules');
+  const incrementalInput = document.getElementById('table-incremental-columns');
+  const tableFilterEditors = document.getElementById('table-filter-editors');
+  let tableFilters = tableFilterInput ? JSON.parse(tableFilterInput.value || '{}') : {};
+  let incrementalColumns = incrementalInput ? JSON.parse(incrementalInput.value || '{}') : {};
+  const operators = [['equals', 'equals'], ['not_equals', 'does not equal'], ['contains', 'contains'], ['starts_with', 'starts with'], ['in', 'in list'], ['between', 'between'], ['is_empty', 'is empty'], ['is_not_empty', 'is not empty'], ['json_path_equals', 'JSON path equals'], ['json_path_contains', 'JSON path contains'], ['json_path_exists', 'JSON path exists']];
+
+  function saveTableFilters() { if (tableFilterInput) tableFilterInput.value = JSON.stringify(tableFilters); if (incrementalInput) incrementalInput.value = JSON.stringify(incrementalColumns); }
+  function renderTableFilters() {
+    if (!tableFilterEditors || !tablePicker) return;
+    const selected = tableCheckboxes.filter(function (checkbox) { return checkbox.checked; });
+    Object.keys(tableFilters).forEach(function (name) { if (!selected.some(function (box) { return box.value === name; })) delete tableFilters[name]; });
+    tableFilterEditors.replaceChildren();
+    selected.forEach(function (checkbox) {
+      const name = checkbox.value;
+      const option = checkbox.closest('.table-picker-option');
+      let columns = []; try { columns = JSON.parse(option.dataset.filterColumns || '[]'); } catch (error) {}
+      const panel = document.createElement('div'); panel.className = 'card card-body mb-2';
+      const title = document.createElement('strong'); title.textContent = name + ' filters'; panel.appendChild(title);
+      const incremental = document.createElement('select'); incremental.className = 'form-select form-select-sm mt-2'; incremental.add(new Option('Full sync (no checkpoint)', '')); columns.forEach(function (item) { incremental.add(new Option('Incremental by ' + item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); }); incremental.value = incrementalColumns[name] || '';
+      incremental.addEventListener('change', function () { if (incremental.value) incrementalColumns[name] = incremental.value; else delete incrementalColumns[name]; saveTableFilters(); renderSyncSummary(tableCheckboxes.filter(function (box) { return box.checked; }), source.value === target.value); }); panel.appendChild(incremental);
+      const rules = tableFilters[name] || [];
+      const addRule = function (rule) {
+        const row = document.createElement('div'); row.className = 'row g-2 mt-1';
+        const column = document.createElement('select'); column.className = 'form-select'; column.add(new Option('Select a column', '')); columns.forEach(function (item) { column.add(new Option(item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); }); column.value = rule.column || '';
+        const operator = document.createElement('select'); operator.className = 'form-select'; operators.forEach(function (item) { operator.add(new Option(item[1], item[0])); }); operator.value = rule.operator || 'equals';
+        const path = document.createElement('input'); path.className = 'form-control'; path.placeholder = 'JSON path'; path.value = rule.json_path || '';
+        const value = document.createElement('input'); value.className = 'form-control'; value.placeholder = 'Value'; value.value = rule.value || '';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-outline-danger'; remove.textContent = 'Remove';
+        const configureValueInput = function () {
+          const selectedColumn = columns.find(function (item) { return item.name === column.value; });
+          const type = (selectedColumn && selectedColumn.type || '').toLowerCase();
+          const isJson = operator.value.indexOf('json_path_') === 0;
+          path.disabled = !isJson;
+          path.placeholder = isJson ? 'JSON path, e.g. customer.id' : 'Used only for JSON path conditions';
+          value.type = isJson ? 'text' : (type.includes('date') && !type.includes('time') ? 'date' : (type.includes('time') ? 'datetime-local' : (/(int|numeric|decimal|float|double|real)/.test(type) ? 'number' : 'text')));
+          value.step = value.type === 'number' ? 'any' : '';
+          if (type.includes('bool') && !isJson) { value.setAttribute('list', 'boolean-values'); value.placeholder = 'true or false'; } else { value.removeAttribute('list'); value.placeholder = isJson ? (operator.value === 'json_path_contains' ? 'Valid JSON, e.g. ["vip"]' : 'Value') : 'Value'; }
+          if (operator.value === 'is_empty' || operator.value === 'is_not_empty' || operator.value === 'json_path_exists') { value.disabled = true; } else { value.disabled = false; }
+        };
+        [column, operator, path, value].forEach(function (input) { input.addEventListener('change', function () { configureValueInput(); sync(); }); input.addEventListener('input', sync); });
+        remove.addEventListener('click', function () { row.remove(); sync(); });
+        [column, operator, path, value, remove].forEach(function (input, index) { const cell = document.createElement('div'); cell.className = index === 0 ? 'col-md-3' : index === 1 ? 'col-md-2' : index === 2 ? 'col-md-3' : index === 3 ? 'col-md-3' : 'col-md-1'; cell.appendChild(input); row.appendChild(cell); });
+        panel.appendChild(row);
+        configureValueInput();
+      };
+      const sync = function () { tableFilters[name] = Array.from(panel.querySelectorAll('.row')).map(function (row) { const fields = row.querySelectorAll('select, input'); return {column: fields[0].value, operator: fields[1].value, json_path: fields[2].value, value: fields[3].value}; }).filter(function (rule) { return rule.column; }); saveTableFilters(); renderSyncSummary(tableCheckboxes.filter(function (box) { return box.checked; }), source.value === target.value); };
+      rules.forEach(addRule);
+      const add = document.createElement('button'); add.type = 'button'; add.className = 'btn btn-outline-secondary btn-sm mt-2'; add.textContent = 'Add condition'; add.addEventListener('click', function () { addRule({}); sync(); }); panel.appendChild(add);
+      tableFilterEditors.appendChild(panel);
+    });
+    saveTableFilters();
+  }
 
   function renderSummary(select, targetId) {
     const option = select.options[select.selectedIndex];
@@ -248,6 +341,25 @@
     summary.replaceChildren(database, host);
   }
 
+  function renderSyncSummary(selectedTables, invalidDirection) {
+    if (!syncSummary) return;
+    const sourceName = source.options[source.selectedIndex] ? source.options[source.selectedIndex].textContent.trim() : 'Source';
+    const targetName = target.options[target.selectedIndex] ? target.options[target.selectedIndex].textContent.trim() : 'Target';
+    const names = selectedTables.map(function (item) { return item.value || item; });
+    const filtered = names.filter(function (name) { return (tableFilters[name] || []).length; });
+    const incremental = names.filter(function (name) { return incrementalColumns[name]; }).map(function (name) { return name + '.' + incrementalColumns[name]; });
+    document.getElementById('summary-direction').textContent = sourceName + ' → ' + targetName;
+    document.getElementById('summary-tables').textContent = names.length ? names.length + ' selected' : 'None selected';
+    document.getElementById('summary-filters').textContent = filtered.length ? filtered.length + ' table' + (filtered.length === 1 ? '' : 's') + ' filtered' : 'None';
+    document.getElementById('summary-incremental').textContent = incremental.length ? incremental.join(', ') : 'Full sync';
+    const selectedMode = document.querySelector('input[name="sync_mode"]:checked');
+    document.getElementById('summary-mode').textContent = selectedMode && selectedMode.value === 'upsert' ? 'Upsert existing records' : 'Add new records only';
+    const state = document.getElementById('summary-ready-state');
+    const ready = names.length > 0 && !invalidDirection;
+    state.textContent = ready ? 'Ready to validate' : 'Not ready';
+    state.className = 'badge ' + (ready ? 'text-bg-success' : 'text-bg-secondary');
+  }
+
   function updateState() {
     renderSummary(source, 'source-summary');
     renderSummary(target, 'target-summary');
@@ -256,12 +368,15 @@
       ? tableCheckboxes.filter(function (checkbox) { return checkbox.checked; })
       : (table && table.value.trim() ? [table.value.trim()] : []);
     const missingTable = selectedTables.length === 0;
+    const productionTarget = target.options[target.selectedIndex] && target.options[target.selectedIndex].dataset.environment === 'production';
+    if (productionConfirmation) productionConfirmation.classList.toggle('d-none', !productionTarget);
     const allSelectedCyclic = selectedTables.length > 0 && cyclicTables.length > 0 && selectedTables.every(function (checkbox) {
       return cyclicTables.includes(checkbox.value);
     });
     error.classList.toggle('d-none', !invalidDirection);
+    const confirmedProduction = !productionTarget || (targetConfirmation && targetConfirmation.value.trim() === target.options[target.selectedIndex].dataset.name);
     if (dryRun) dryRun.disabled = invalidDirection || missingTable;
-    if (queue) queue.disabled = invalidDirection || missingTable || allSelectedCyclic;
+    if (queue) queue.disabled = invalidDirection || missingTable || allSelectedCyclic || !confirmedProduction;
     if (selectedCount) selectedCount.textContent = selectedTables.length;
     if (summary) {
       summary.classList.toggle('d-none', missingTable);
@@ -269,6 +384,18 @@
         summaryLabel.textContent = selectedTables.length + ' table' + (selectedTables.length === 1 ? '' : 's') + ' selected';
       }
     }
+    if (dependencyGuidance && tablePicker) {
+      const selectedNames = new Set(selectedTables.map(function (item) { return item.value || item; }));
+      const missingParents = new Set();
+      tableCheckboxes.filter(function (checkbox) { return checkbox.checked; }).forEach(function (checkbox) {
+        (checkbox.closest('.table-picker-option').dataset.dependencies || '').split('|').filter(Boolean).forEach(function (parent) { if (!selectedNames.has(parent)) missingParents.add(parent); });
+      });
+      dependencyGuidance.classList.toggle('d-none', missingParents.size === 0);
+      if (dependencyGuidanceText) dependencyGuidanceText.textContent = missingParents.size ? Array.from(missingParents).join(', ') + ' must be synchronized first or selected in this batch.' : '';
+      dependencyGuidance.dataset.parents = Array.from(missingParents).join('|');
+    }
+    renderTableFilters();
+    renderSyncSummary(selectedTables, invalidDirection);
   }
 
   function syncVisualSelection() {
@@ -308,9 +435,11 @@
     table.addEventListener('input', updateState);
     table.addEventListener('change', updateState);
   }
+  document.querySelectorAll('input[name="sync_mode"]').forEach(function (input) { input.addEventListener('change', updateState); });
+  if (targetConfirmation) targetConfirmation.addEventListener('input', updateState);
   if (tablePicker) {
       document.getElementById('table-source-name').textContent = source.options[source.selectedIndex].dataset.database;
-      const actionButtons = [dryRun, queue, bulkSync].filter(Boolean);
+      const actionButtons = [dryRun, exportReport, saveProfile, queue, bulkSync].filter(Boolean);
       actionButtons.forEach(function (button) {
         button.addEventListener('click', function () {
           if (actionInput && button.dataset.action) {
@@ -334,13 +463,18 @@
       syncVisualSelection();
       updateState();
     });
+    if (addParentTables) addParentTables.addEventListener('click', function () {
+      const parents = (dependencyGuidance.dataset.parents || '').split('|').filter(Boolean);
+      tableCheckboxes.forEach(function (checkbox) { if (parents.includes(checkbox.value)) checkbox.checked = true; });
+      syncVisualSelection(); updateState();
+    });
     const syncForm = document.getElementById('sync-form');
     if (syncForm) {
       syncForm.addEventListener('submit', function (event) {
         const submitter = event.submitter;
         const action = submitter && submitter.dataset.action ? submitter.dataset.action : (actionInput ? actionInput.value : 'execute');
         if (actionInput) actionInput.value = action;
-        if (!['execute', 'sync_all', 'dry_run', 'discover'].includes(action)) return;
+        if (!['execute', 'sync_all', 'dry_run', 'export_report', 'save_profile', 'discover'].includes(action)) return;
         const activeButton = submitter || (action === 'sync_all' ? bulkSync : queue);
         if (!activeButton || !['execute', 'sync_all'].includes(action)) return;
         syncForm.setAttribute('aria-busy', 'true');
@@ -350,7 +484,7 @@
         }
         activeButton.disabled = true;
         activeButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' + (activeButton.dataset.loadingText || 'Working...');
-        [dryRun, queue, bulkSync].forEach(function (control) {
+        [dryRun, exportReport, saveProfile, queue, bulkSync].forEach(function (control) {
           if (control && control !== activeButton) control.disabled = true;
         });
       });
@@ -376,7 +510,9 @@
     target.value = sourceValue;
     invalidateTablePicker();
   });
+  if (profileSelect) profileSelect.addEventListener('change', function () { if (profileSelect.value) window.location.href = '{{ url_for("sync.create") }}?profile_id=' + encodeURIComponent(profileSelect.value); });
   updateState();
 }());
 </script>
+<datalist id="boolean-values"><option value="true"><option value="false"></datalist>
 {% endblock %}

@@ -1,6 +1,74 @@
 from sync_manager.sync import engine
 
 
+def test_connection_engine_uses_postgresql_driver_and_public_schema(monkeypatch):
+    captured = {}
+
+    class Config:
+        name = "postgres"
+        database_type = "postgresql"
+        username = "sync"
+        encrypted_password = "encrypted"
+        host = "localhost"
+        port = 5432
+        database_name = "target"
+        is_enabled = True
+
+    monkeypatch.setattr(engine, "decrypt_secret", lambda value: "password")
+    monkeypatch.setattr(engine, "create_engine", lambda url, **kwargs: captured.update(url=url, kwargs=kwargs) or object())
+    engine.connection_engine(Config())
+
+    assert captured["url"].drivername == "postgresql+psycopg"
+    assert captured["kwargs"]["connect_args"] == {"options": "-csearch_path=public"}
+
+
+def test_dry_run_applies_structured_source_filters(monkeypatch):
+    from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
+
+    source_engine = create_engine("sqlite:///:memory:")
+    target_engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    tickets = Table("tickets", metadata, Column("id", Integer, primary_key=True), Column("status", String))
+    metadata.create_all(source_engine)
+    metadata.create_all(target_engine)
+    with source_engine.begin() as connection:
+        connection.execute(tickets.insert(), [{"id": 1, "status": "open"}, {"id": 2, "status": "closed"}])
+    monkeypatch.setattr(engine, "connection_engine", lambda config: source_engine if config == "source" else target_engine)
+
+    result = engine.dry_run("source", "target", "tickets", filter_rules=[{"column": "status", "operator": "equals", "value": "open"}])
+
+    assert result["source_count"] == 1
+    assert result["new_count"] == 1
+
+
+def test_filter_rejects_unknown_columns():
+    from sqlalchemy import Column, Integer, MetaData, Table
+
+    table = Table("tickets", MetaData(), Column("id", Integer, primary_key=True))
+    try:
+        engine._source_filter_clause(table, [{"column": "missing", "operator": "equals", "value": "x"}])
+    except RuntimeError as exc:
+        assert "Invalid filter" in str(exc)
+    else:
+        raise AssertionError("Expected invalid filter to be rejected")
+
+
+def test_postgresql_jsonb_path_filter_compiles_without_raw_sql():
+    from sqlalchemy import Column, MetaData, Table, select
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    table = Table("events", MetaData(), Column("metadata", JSONB))
+    clauses = engine._source_filter_clause(
+        table,
+        [{"column": "metadata", "operator": "json_path_equals", "json_path": "customer.id", "value": "15"}],
+        dialect_name="postgresql",
+    )
+
+    compiled = str(select(table).where(*clauses).compile(dialect=postgresql.dialect()))
+    assert "#>>" in compiled
+
+
 class FakeInspector:
     def __init__(self, tables, columns=None, primary_keys=None, foreign_keys=None, unique_constraints=None):
         self.tables = tables
@@ -48,6 +116,7 @@ def test_discover_tables_returns_source_metadata_and_target_presence(monkeypatch
             {
                 "name": "customers",
                 "column_count": 2,
+                "filter_columns": [{"name": "id", "type": ""}, {"name": "email", "type": ""}],
                 "primary_key": ["id"],
                 "dependencies": ["users"],
                 "mapping_columns": [],
@@ -65,8 +134,9 @@ def test_discover_tables_returns_source_metadata_and_target_presence(monkeypatch
                 "target_exists": True,
             },
         {
-            "name": "events",
-            "column_count": 1,
+                "name": "events",
+                "column_count": 1,
+                "filter_columns": [{"name": "event_id", "type": ""}],
             "primary_key": [],
             "dependencies": [],
             "mapping_columns": [],
