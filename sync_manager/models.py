@@ -68,6 +68,7 @@ class SyncJob(db.Model):
     sync_mode = db.Column(db.String(20), nullable=False, default="insert_only")
     filter_rules = db.Column(db.Text)
     incremental_column = db.Column(db.String(128))
+    row_limit = db.Column(db.Integer)
     cycle_sync = db.Column(db.Boolean, nullable=False, default=False)
     status = db.Column(db.String(30), nullable=False, default="pending")
     inserted_count = db.Column(db.Integer, nullable=False, default=0)

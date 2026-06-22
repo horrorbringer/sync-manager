@@ -132,6 +132,33 @@ def test_sync_form_without_action_shows_warning(app, client, monkeypatch):
     assert b"Select an action before submitting the synchronization form." in response.data
 
 
+def test_incremental_sync_requires_checkpoint_for_every_selected_table(app, client, monkeypatch):
+    with app.app_context():
+        source = DatabaseConnection(name="incremental-source", host="localhost", database_name="source", username="root", encrypted_password="x")
+        target = DatabaseConnection(name="incremental-target", host="localhost", database_name="target", username="root", encrypted_password="x")
+        db.session.add_all([source, target])
+        db.session.commit()
+        source_id, target_id = source.id, target.id
+
+    monkeypatch.setattr("sync_manager.sync.routes.discover_tables", lambda *args, **kwargs: [])
+    client.post("/auth/login", data={"username": "admin", "password": "password"})
+
+    response = client.post(
+        "/sync/new",
+        data={
+            "source_id": source_id,
+            "target_id": target_id,
+            "table_name": "customers",
+            "sync_scope": "incremental",
+            "action": "dry_run",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"Incremental sync requires a checkpoint column for every selected table: customers" in response.data
+
+
 def test_execute_creates_jobs_with_selected_sync_mode(app, client, monkeypatch):
     with app.app_context():
         source = DatabaseConnection(name="mode-source", host="localhost", database_name="source", username="root", encrypted_password="x")
@@ -154,6 +181,7 @@ def test_execute_creates_jobs_with_selected_sync_mode(app, client, monkeypatch):
             "source_id": source_id,
             "target_id": target_id,
             "table_name": "customers",
+            "row_limit": "25",
             "action": "execute",
         },
         follow_redirects=True,
@@ -164,6 +192,7 @@ def test_execute_creates_jobs_with_selected_sync_mode(app, client, monkeypatch):
     with app.app_context():
         job = db.session.get(SyncJob, queued[0])
         assert job.sync_mode == "insert_only"
+        assert job.row_limit == 25
         assert job.sync_mode_label == "Add new records only"
 
 

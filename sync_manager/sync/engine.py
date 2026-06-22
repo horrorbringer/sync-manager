@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 
-from flask import current_app
+from flask import current_app, has_app_context
 from sqlalchemy import Date, DateTime, Integer, MetaData, Table, and_, create_engine, inspect, or_, select, text, tuple_
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -19,6 +19,7 @@ from ..security import decrypt_secret
 _LOOKUP_COLUMN_PRIORITY = ("username", "email", "name", "title", "slug", "code", "key", "identifier")
 _FILTER_OPERATORS = {"equals", "not_equals", "contains", "starts_with", "in", "between", "is_empty", "is_not_empty", "json_path_equals", "json_path_contains", "json_path_exists"}
 _SENSITIVE_COLUMN_MARKERS = ("password", "secret", "token", "api_key", "access_key", "private_key")
+_LIMITED_FULL_CHECKPOINT = "__limited_full_primary_key__"
 
 
 def _preview_value(column_name, value):
@@ -95,6 +96,8 @@ def _incremental_clause(source_table, source_config, target_config, table_name, 
     if column.type._type_affinity not in {DateTime, Date, Integer}:
         raise RuntimeError("Incremental sync columns must be a date, datetime, or integer column")
     _cursor_value(column, "0" if column.type._type_affinity is Integer else "1970-01-01")
+    if not has_app_context():
+        return [], None
     checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
         SyncCheckpoint.source_connection_id == source_config.id,
         SyncCheckpoint.target_connection_id == target_config.id,
@@ -107,6 +110,28 @@ def _incremental_clause(source_table, source_config, target_config, table_name, 
     cursor = _cursor_value(column, checkpoint.cursor_value)
     pk_column = source_table.c[pk_names[0]]
     return [or_(column > cursor, and_(column == cursor, pk_column > _cursor_value(pk_column, checkpoint.cursor_primary_key)))], checkpoint
+
+
+def _limited_full_clause(source_table, source_config, target_config, table_name, filter_rules, incremental_column, row_limit):
+    """Resume a limited full sync by primary key without changing normal full-sync semantics."""
+    if not row_limit or incremental_column:
+        return [], None
+    pk_names = [column.name for column in source_table.primary_key.columns]
+    if len(pk_names) != 1:
+        raise RuntimeError("A limited full sync requires a table with one primary-key column so it can continue safely.")
+    if not has_app_context():
+        return [], None
+    checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
+        SyncCheckpoint.source_connection_id == source_config.id,
+        SyncCheckpoint.target_connection_id == target_config.id,
+        SyncCheckpoint.table_name == table_name,
+        SyncCheckpoint.filter_signature == _filter_signature(filter_rules),
+        SyncCheckpoint.incremental_column == _LIMITED_FULL_CHECKPOINT,
+    ))
+    if not checkpoint:
+        return [], None
+    primary_key = source_table.c[pk_names[0]]
+    return [primary_key > _cursor_value(primary_key, checkpoint.cursor_primary_key)], checkpoint
 
 
 def _save_incremental_checkpoint(job, filter_rules, cursor_pair):
@@ -126,6 +151,34 @@ def _save_incremental_checkpoint(job, filter_rules, cursor_pair):
         db.session.add(checkpoint)
     else:
         checkpoint.cursor_value, checkpoint.cursor_primary_key, checkpoint.updated_at = str(value), str(primary_key), utcnow()
+
+
+def _save_limited_full_checkpoint(job, filter_rules, primary_key):
+    if job.incremental_column or not job.row_limit or primary_key is None:
+        return
+    signature = _filter_signature(filter_rules)
+    checkpoint = db.session.scalar(db.select(SyncCheckpoint).where(
+        SyncCheckpoint.source_connection_id == job.source_connection_id,
+        SyncCheckpoint.target_connection_id == job.target_connection_id,
+        SyncCheckpoint.table_name == job.table_name,
+        SyncCheckpoint.filter_signature == signature,
+        SyncCheckpoint.incremental_column == _LIMITED_FULL_CHECKPOINT,
+    ))
+    if checkpoint is None:
+        checkpoint = SyncCheckpoint(
+            source_connection_id=job.source_connection_id,
+            target_connection_id=job.target_connection_id,
+            table_name=job.table_name,
+            filter_signature=signature,
+            incremental_column=_LIMITED_FULL_CHECKPOINT,
+            cursor_value=str(primary_key),
+            cursor_primary_key=str(primary_key),
+        )
+        db.session.add(checkpoint)
+    else:
+        checkpoint.cursor_value = str(primary_key)
+        checkpoint.cursor_primary_key = str(primary_key)
+        checkpoint.updated_at = utcnow()
 
 
 def incremental_checkpoint_status(source_id, target_id, table_filters, incremental_columns):
@@ -206,11 +259,20 @@ def connection_engine(config):
 def _target_write_statement(target_table, rows, sync_mode, pk_names, dialect_name):
     insert = postgresql_insert if dialect_name == "postgresql" else mysql_insert
     statement = insert(target_table).values(rows)
-    update_columns = {column.name: statement.inserted[column.name] for column in target_table.columns if column.name not in pk_names}
     if dialect_name == "postgresql":
+        update_columns = {
+            column.name: statement.excluded[column.name]
+            for column in target_table.columns
+            if column.name not in pk_names
+        }
         if sync_mode == "insert_only" or not update_columns:
             return statement.on_conflict_do_nothing(index_elements=pk_names), bool(update_columns)
         return statement.on_conflict_do_update(index_elements=pk_names, set_=update_columns), True
+    update_columns = {
+        column.name: statement.inserted[column.name]
+        for column in target_table.columns
+        if column.name not in pk_names
+    }
     if sync_mode == "insert_only" or not update_columns:
         return statement.prefix_with("IGNORE"), bool(update_columns)
     return statement.on_duplicate_key_update(**update_columns), True
@@ -350,6 +412,41 @@ def _foreign_key_mapping_plan(source_inspector, target_inspector, table_name, ma
             }
         )
     return {"preview": preview, "errors": errors}
+
+
+def _direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name, rows):
+    """Report missing direct-copy parent rows before a target write can hit an FK violation."""
+    errors = []
+    for mapping in mapping_plan.get("preview", []):
+        if mapping.get("explicit"):
+            continue
+        fk_column = mapping["column"]
+        values = {row.get(fk_column) for row in rows if row.get(fk_column) not in (None, "")}
+        if not values:
+            continue
+        parent_table = Table(mapping["referred_table"], MetaData(), autoload_with=target_engine)
+        parent_pk_names = [column.name for column in parent_table.primary_key.columns]
+        if len(parent_pk_names) != 1:
+            continue
+        parent_pk = parent_table.c[parent_pk_names[0]]
+        with target_engine.connect() as target:
+            present = set(target.execute(select(parent_pk).where(parent_pk.in_(values))).scalars())
+        missing = sorted(values - present, key=str)
+        if missing:
+            shown = ", ".join(str(value) for value in missing[:5])
+            suffix = "" if len(missing) <= 5 else " (and {} more)".format(len(missing) - 5)
+            errors.append(
+                "Table '{}' references missing target row{} in '{}' through '{}': {}{}. "
+                "Sync the parent table first, or include those parent rows in its filter/limit.".format(
+                    table_name,
+                    "s" if len(missing) != 1 else "",
+                    mapping["referred_table"],
+                    fk_column,
+                    shown,
+                    suffix,
+                )
+            )
+    return errors
 
 
 def _build_row_cache(engine, table_name, columns):
@@ -783,7 +880,7 @@ def expand_tables_with_dependencies(source_config, table_names):
     return expanded
 
 
-def dry_run(source_config, target_config, table_name, filter_rules=None, incremental_column=None):
+def dry_run(source_config, target_config, table_name, filter_rules=None, incremental_column=None, row_limit=None):
     source_engine = connection_engine(source_config)
     target_engine = connection_engine(target_config)
     metadata = MetaData()
@@ -793,10 +890,14 @@ def dry_run(source_config, target_config, table_name, filter_rules=None, increme
     try:
         filter_clauses = _source_filter_clause(source_table, filter_rules, source_engine.dialect.name)
         incremental_clauses, _ = _incremental_clause(source_table, source_config, target_config, table_name, filter_rules, incremental_column)
+        limited_full_clauses, _ = _limited_full_clause(source_table, source_config, target_config, table_name, filter_rules, incremental_column, row_limit)
     except RuntimeError as exc:
         return {"errors": [str(exc)], "source_count": 0, "target_count": 0}
     with source_engine.connect() as source, target_engine.connect() as target:
-        source_count = source.execute(select(db.func.count()).select_from(source_table).where(*(filter_clauses + incremental_clauses))).scalar_one()
+        order_columns = ([source_table.c[incremental_column]] if incremental_column else []) + [source_table.c[name] for name in pk_names]
+        source_query = select(source_table).where(*(filter_clauses + incremental_clauses + limited_full_clauses)).order_by(*order_columns)
+        source_rows = [dict(row._mapping) for row in source.execute(source_query.limit(row_limit) if row_limit else source_query)]
+        source_count = len(source_rows)
         target_count = target.execute(select(db.func.count()).select_from(target_table)).scalar_one()
         if source_count == 0:
             return {
@@ -807,13 +908,23 @@ def dry_run(source_config, target_config, table_name, filter_rules=None, increme
                 "existing_count": 0,
                 "empty": True,
             }
-        source_keys = set(source.execute(select(*(source_table.c[name] for name in pk_names)).where(*(filter_clauses + incremental_clauses))).all())
+        source_keys = {tuple(row[name] for name in pk_names) for row in source_rows}
         target_keys = set(target.execute(select(*(target_table.c[name] for name in pk_names))).all())
         preview_rows = [
-            {name: _preview_value(name, value) for name, value in row._mapping.items()}
-            for row in source.execute(select(source_table).where(*(filter_clauses + incremental_clauses)).order_by(*(source_table.c[name] for name in pk_names)).limit(10))
+            {name: _preview_value(name, value) for name, value in row.items()}
+            for row in source_rows[:10]
         ]
     errors = validate_table(source_config, target_config, table_name)
+    try:
+        mapping_plan = _foreign_key_mapping_plan(
+            inspect(source_engine),
+            inspect(target_engine),
+            table_name,
+            mapping_rules=_load_mapping_rules(source_config),
+        )
+        errors.extend(_direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name, source_rows))
+    except Exception as exc:
+        errors.append("Unable to preflight foreign-key references: {}".format(exc))
     if errors:
         return {"errors": errors, "source_count": source_count, "target_count": target_count, "preview_rows": preview_rows}
     return {
@@ -865,24 +976,37 @@ def synchronize(job, batch_size=500):
         )
         pk_names = [column.name for column in source_table.primary_key.columns]
         filter_clauses = _source_filter_clause(source_table, job.filters, source_engine.dialect.name)
+        row_limit = getattr(job, "row_limit", None)
+        if row_limit is not None and row_limit < 1:
+            raise RuntimeError("Maximum rows must be a positive whole number.")
         incremental_clauses, _ = _incremental_clause(source_table, job.source, job.target, job.table_name, job.filters, job.incremental_column)
+        limited_full_clauses, _ = _limited_full_clause(source_table, job.source, job.target, job.table_name, job.filters, job.incremental_column, row_limit)
         with source_engine.connect() as source:
-            job.source_count = source.execute(select(db.func.count()).select_from(source_table).where(*(filter_clauses + incremental_clauses))).scalar_one()
+            matching_count = source.execute(select(db.func.count()).select_from(source_table).where(*(filter_clauses + incremental_clauses + limited_full_clauses))).scalar_one()
+        job.source_count = min(matching_count, row_limit) if row_limit else matching_count
         db.session.commit()
         offset = 0
+        processed_source_rows = 0
         wrote_target_rows = False
         max_incremental_cursor = None
+        max_limited_full_primary_key = None
         try:
             while True:
+                remaining = row_limit - processed_source_rows if row_limit else batch_size
+                if row_limit and remaining <= 0:
+                    break
                 order_columns = ([source_table.c[job.incremental_column]] if job.incremental_column else []) + [source_table.c[name] for name in pk_names]
-                query = select(source_table).where(*(filter_clauses + incremental_clauses)).order_by(*order_columns).offset(offset).limit(batch_size)
+                query = select(source_table).where(*(filter_clauses + incremental_clauses + limited_full_clauses)).order_by(*order_columns).offset(offset).limit(min(batch_size, remaining))
                 with source_engine.connect() as source:
                     source_rows = [dict(row._mapping) for row in source.execute(query)]
                 if not source_rows:
                     break
+                processed_source_rows += len(source_rows)
                 if job.incremental_column:
                     candidate = max((row[job.incremental_column], row[pk_names[0]]) for row in source_rows)
                     max_incremental_cursor = candidate if max_incremental_cursor is None or candidate > max_incremental_cursor else max_incremental_cursor
+                elif row_limit:
+                    max_limited_full_primary_key = source_rows[-1][pk_names[0]]
                 rows, skipped_rows = _remap_foreign_key_values(
                     source_engine,
                     target_engine,
@@ -998,6 +1122,7 @@ def synchronize(job, batch_size=500):
                     _advance_postgresql_sequence(target, target_table)
             if job.failed_count == 0:
                 _save_incremental_checkpoint(job, job.filters, max_incremental_cursor)
+                _save_limited_full_checkpoint(job, job.filters, max_limited_full_primary_key)
             job.status = "completed"
         except Exception as exc:
             job.status = "failed"

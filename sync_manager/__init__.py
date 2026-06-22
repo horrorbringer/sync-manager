@@ -130,6 +130,9 @@ def create_app(test_config=None):
             if "incremental_column" not in columns:
                 with db.engine.begin() as connection:
                     connection.execute(text("ALTER TABLE sync_job ADD COLUMN incremental_column VARCHAR(128)"))
+            if "row_limit" not in columns:
+                with db.engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE sync_job ADD COLUMN row_limit INTEGER"))
     init_notification_executor(app)
 
     @app.template_filter("compact_datetime")

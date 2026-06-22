@@ -21,23 +21,25 @@
   <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('connections.index') }}">Manage connections</a>
 </div>
 {% else %}
-<form method="post" class="sync-builder" id="sync-form">
+{% set validation_has_errors = results and (results|selectattr('result.errors')|list|length > 0) %}
+{% set validation_passed = results and not validation_has_errors %}
+<form method="post" class="sync-builder" id="sync-form" data-validation-ready="{{ 'true' if validation_passed else 'false' }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="action" value="execute" id="sync-action">
   <input type="hidden" name="profile_id" value="{{ request.args.get('profile_id', request.form.get('profile_id', '')) }}">
-  {% if profiles %}<div class="card card-body mb-3"><label class="form-label" for="sync-profile">Saved profile</label><select class="form-select" id="sync-profile"><option value="">Start a new setup</option>{% for profile in profiles %}<option value="{{ profile.id }}">{{ profile.name }}</option>{% endfor %}</select></div>{% endif %}
-  <aside class="card card-body mb-3 sticky-top" id="sync-summary" style="top:1rem; z-index:10">
-    <div class="d-flex justify-content-between align-items-center"><strong>Sync summary</strong><span class="badge text-bg-secondary" id="summary-ready-state">Not ready</span></div>
-    <dl class="row small mb-0 mt-2"><dt class="col-4">Direction</dt><dd class="col-8" id="summary-direction">Choose connections</dd><dt class="col-4">Tables</dt><dd class="col-8" id="summary-tables">None selected</dd><dt class="col-4">Filters</dt><dd class="col-8" id="summary-filters">None</dd><dt class="col-4">Incremental</dt><dd class="col-8" id="summary-incremental">Full sync</dd><dt class="col-4">Mode</dt><dd class="col-8" id="summary-mode">Add new records only</dd></dl>
+  <aside class="sync-summary-bar sticky-top" id="sync-summary" style="top:1rem; z-index:10">
+    <strong>Sync summary</strong><span class="badge text-bg-secondary" id="summary-ready-state">Not ready</span>
+    <div class="sync-summary-chips"><span><small>Direction</small><b id="summary-direction">Choose connections</b></span><span><small>Tables</small><b id="summary-tables">None selected</b></span><span><small>Filters</small><b id="summary-filters">None</b></span><span><small>Scope</small><b id="summary-incremental">Full sync</b></span><span><small>Limit</small><b id="summary-limit">No limit</b></span><span><small>Mode</small><b id="summary-mode">Add new records only</b></span></div>
   </aside>
 
   <section class="card sync-step">
     <div class="sync-step-number">1</div>
     <div class="sync-step-content">
       <div class="sync-step-heading">
-        <div><h2>Choose direction</h2><p>Data flows from the source into the target.</p></div>
+        <div><h2>Setup</h2><p>Choose a saved setup, then set the source and target direction.</p></div>
         <span class="sync-safety-badge">{{ icon('check', 15) }} No target deletes</span>
       </div>
+      <div class="sync-profile-bar"><div>{% if profiles %}<label class="form-label" for="sync-profile">Saved setup</label><select class="form-select form-select-sm" id="sync-profile"><option value="">Start a new setup</option>{% for profile in profiles %}<option value="{{ profile.id }}">{{ profile.name }}</option>{% endfor %}</select>{% else %}<span class="small text-muted">Save this configuration below to reuse it later.</span>{% endif %}</div><div class="sync-profile-save"><input class="form-control form-control-sm" name="profile_name" value="{{ active_profile.name if active_profile else '' }}" placeholder="Save setup as…"><button type="submit" class="btn btn-outline-secondary btn-sm" id="save-profile-button" data-action="save_profile">Save setup</button></div></div>
       <div class="sync-direction-grid">
         <div class="connection-picker">
           <label class="form-label" for="source-id">Source connection</label>
@@ -112,6 +114,7 @@
               {% endif %}
               {% if dependency_state and table.name in dependency_state.cycle_tables %}<span class="table-meta-pill table-meta-danger">Cyclic dependency</span>{% endif %}
               {% if table.target_exists %}<span class="table-target-state table-target-found">{{ icon('check', 14) }} Target found</span>{% else %}<span class="table-target-state table-target-missing">{{ icon('warning', 14) }} Target missing</span>{% endif %}
+              <span class="table-filter-status" data-filter-status>No filter</span>
             </span>
           </label>
           {% endfor %}
@@ -143,25 +146,32 @@
   <section class="card sync-step">
     <div class="sync-step-number">3</div>
     <div class="sync-step-content">
-      <div class="sync-step-heading"><div><h2>Optional source filters</h2><p>Each selected table can have its own conditions. Select dependent parent tables explicitly to keep foreign keys safe.</p></div></div>
+      <div class="sync-step-heading sync-run-heading">
+        <div><h2>Configure and run</h2><p>Choose what to copy, validate it, then start the synchronization.</p></div>
+      </div>
       <input type="hidden" name="table_filter_rules" id="table-filter-rules" value='{{ selected_table_filters|tojson }}'>
       <input type="hidden" name="table_incremental_columns" id="table-incremental-columns" value='{{ selected_incremental_columns|tojson }}'>
-      <div id="table-filter-editors"></div>
-      {% if checkpoint_statuses %}
-      <div class="mt-3 small"><strong>Incremental checkpoints</strong>{% for table_name, checkpoint in checkpoint_statuses.items() %}<div class="mt-1"><code>{{ table_name }}.{{ checkpoint.column }}</code>: {% if checkpoint.cursor_value is not none %}last successful value <code>{{ checkpoint.cursor_value }}</code>, primary key <code>{{ checkpoint.cursor_primary_key }}</code>{% else %}<span class="text-muted">no successful checkpoint yet; the next run starts from the beginning</span>{% endif %}</div>{% endfor %}</div>
-      {% endif %}
-      <div class="form-text">Conditions within each table are combined with AND. For PostgreSQL JSON/JSONB, choose a JSON-path condition and enter paths such as <code>customer.id</code>.</div>
-    </div>
-  </section>
-
-  <section class="card sync-step">
-    <div class="sync-step-number">4</div>
-    <div class="sync-step-content">
-      <div class="sync-step-heading sync-run-heading">
-        <div><h2>Validate and run</h2><p>Check schema compatibility and record counts before {{ 'running the synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'creating the background job' }}.</p></div>
+      <div class="sync-scope-picker">
+        <label class="form-label">Sync scope</label>
+        <div class="sync-mode-options">
+          <label class="sync-mode-option {% if not selected_incremental_columns %}selected{% endif %}">
+            <input type="radio" name="sync_scope" value="full" {% if not selected_incremental_columns %}checked{% endif %}>
+            <span><strong>Full sync <span class="badge text-bg-success ms-1">Recommended first run</span></strong><small>Process every matching source row. Best when setting up a new synchronization.</small></span>
+          </label>
+          <label class="sync-mode-option {% if selected_incremental_columns %}selected{% endif %}">
+            <input type="radio" name="sync_scope" value="incremental" {% if selected_incremental_columns %}checked{% endif %}>
+            <span><strong>Changed rows only</strong><small>Continue after the last successful checkpoint using a date, time, or numeric ID column.</small></span>
+          </label>
+        </div>
+        <div class="sync-scope-settings d-none" id="incremental-settings"></div>
+        <div class="sync-scope-warning d-none" id="incremental-requirement">Choose a checkpoint column for every selected table before validation.</div>
+        <div class="sync-row-limit"><label class="form-label" for="row-limit">Maximum rows per selected table <span class="text-muted fw-normal">optional</span></label><input class="form-control" id="row-limit" name="row_limit" type="number" min="1" max="1000000" step="1" value="{{ request.form.get('row_limit', '') }}" placeholder="No limit"><div class="form-text">Use this for a controlled batch. With a limit, the next successful run continues after the last processed primary key; remove the limit to restart a full sync. Incremental sync continues after its checkpoint.</div></div>
+        {% if checkpoint_statuses %}
+        <details class="sync-advanced-panel mt-2"><summary>View incremental checkpoints</summary><div class="small mt-2">{% for table_name, checkpoint in checkpoint_statuses.items() %}<div class="mt-1"><code>{{ table_name }}.{{ checkpoint.column }}</code>: {% if checkpoint.cursor_value is not none %}last successful value <code>{{ checkpoint.cursor_value }}</code>, primary key <code>{{ checkpoint.cursor_primary_key }}</code>{% else %}<span class="text-muted">no successful checkpoint yet; the next run starts from the beginning</span>{% endif %}</div>{% endfor %}</div></details>
+        {% endif %}
       </div>
       <div class="sync-mode-picker">
-        <label class="form-label">Sync behavior</label>
+        <label class="form-label">Write behavior</label>
         <div class="sync-mode-options">
           <label class="sync-mode-option {% if selected_sync_mode == 'insert_only' %}selected{% endif %}">
             <input type="radio" name="sync_mode" value="insert_only" {% if selected_sync_mode == 'insert_only' %}checked{% endif %}>
@@ -172,56 +182,46 @@
             <span><strong>Add new records and update existing ones</strong><small>Use when the source should overwrite matching target rows.</small></span>
           </label>
         </div>
-        <div class="sync-performance-presets">
-          <div class="sync-performance-presets-header">
-            <strong>Performance presets</strong>
-            <span>Quick guidance for common sync goals.</span>
-          </div>
-          <div class="sync-performance-grid">
-            <div class="sync-performance-card sync-performance-fastest">
-              <span class="sync-performance-label">Fastest</span>
-              <strong>Add new records only</strong>
-              <small>Best for append-only syncs and initial migrations when you want the least write overhead.</small>
-            </div>
-            <div class="sync-performance-card sync-performance-safest">
-              <span class="sync-performance-label">Safest</span>
-              <strong>Validate first</strong>
-              <small>Run validation before syncing so you can review tables and catch issues early.</small>
-            </div>
-            <div class="sync-performance-card sync-performance-balanced">
-              <span class="sync-performance-label">Balanced</span>
-              <strong>Bulk only when needed</strong>
-              <small>Use bulk sync for first-time migrations, then switch to selected-table runs.</small>
-            </div>
-          </div>
-        </div>
       </div>
+      <details class="sync-advanced-panel">
+        <summary>Advanced settings: source filters and report</summary>
+        <div class="sync-advanced-content">
+          <div class="sync-advanced-heading"><div><strong>Source filters</strong><span>Optional. Conditions within a table are combined with AND.</span></div><span id="filter-summary-count">No filters</span></div>
+          <div id="table-filter-editors"></div>
+          <datalist id="boolean-values"><option value="true"><option value="false"></datalist>
+          <div class="form-text">For PostgreSQL JSON/JSONB, choose a JSON-path condition and enter paths such as <code>customer.id</code>.</div>
+          <div class="sync-advanced-actions"><button type="submit" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" id="export-report-button" data-action="export_report">Download validation report</button></div>
+        </div>
+      </details>
       <div class="sync-notice sync-notice-warning d-none mt-3" id="production-confirmation"><div><strong>Production target confirmation</strong><p class="mb-1">Type the target connection name to enable synchronization.</p><input class="form-control" name="target_confirmation" id="target-confirmation" placeholder="Target connection name"></div></div>
       <div class="sync-actions">
         <button type="submit" class="btn btn-outline-primary d-inline-flex align-items-center gap-2" id="dry-run-button" data-action="dry_run">{{ icon('test', 17) }} Run validation</button>
-        <button type="submit" class="btn btn-outline-secondary d-inline-flex align-items-center gap-2" id="export-report-button" data-action="export_report">Download validation report</button>
-        <input class="form-control" style="max-width:220px" name="profile_name" value="{{ active_profile.name if active_profile else '' }}" placeholder="Profile name">
-        <button type="submit" class="btn btn-outline-secondary" id="save-profile-button" data-action="save_profile">Save profile</button>
-        <button type="submit" class="btn btn-primary d-inline-flex align-items-center gap-2" id="queue-button" data-action="execute" onclick="return confirm('{{ 'Run' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue' }} this one-way synchronization? {% if selected_sync_mode == 'insert_only' %}Existing target rows will be ignored.{% else %}Existing target rows may be updated.{% endif %}')">{{ icon('play', 16) }} {{ 'Run synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue synchronization' }}</button>
       </div>
+      <div class="sync-validation-gate" id="sync-validation-gate">Run validation to see the final recommendation and run action.</div>
       <div class="sync-submit-state d-none" id="sync-submit-state">
         <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
         <span>Submitting...</span>
         <span id="sync-submit-text"></span>
       </div>
-      <div class="sync-safety-note">{% if selected_sync_mode == 'insert_only' %}This run will only add new rows. Existing target rows are not updated.{% else %}Only inserts and updates are performed. Rows are never deleted from the target.{% endif %} {% if config.SYNC_EXECUTION_MODE == 'inline' %}This page waits until the job finishes; Redis is not required.{% else %}The job runs through Celery in the background.{% endif %}</div>
+      <div class="sync-safety-note">Rows are never deleted from the target. {% if config.SYNC_EXECUTION_MODE == 'inline' %}This page waits until the job finishes; Redis is not required.{% else %}The job runs through Celery in the background.{% endif %}</div>
     </div>
   </section>
 </form>
 {% endif %}
 
 {% if results %}
-{% set has_errors = results|selectattr('result.errors')|list|length > 0 %}
+{% set has_errors = validation_has_errors %}
 <section class="card validation-result {% if has_errors %}validation-result-error{% else %}validation-result-success{% endif %}">
   <div class="validation-result-header">
     <span class="validation-result-icon">{{ icon('warning' if has_errors else 'check', 20) }}</span>
     <div><h2>{{ 'Validation found issues' if has_errors else 'Ready to run' }}</h2><p>{{ 'No jobs were started. Resolve every table issue first.' if has_errors else results|length ~ ' selected table' ~ ('' if results|length == 1 else 's') ~ ' passed validation.' }}</p></div>
+    <span class="validation-result-state {% if has_errors %}has-errors{% endif %}">{{ 'Action required' if has_errors else 'Validated' }}</span>
   </div>
+  <div class="validation-recommendation {% if has_errors %}has-errors{% endif %}">
+    <strong>Recommended next step</strong>
+    <span>{% if has_errors %}Fix the listed table issues, then run validation again. No data has been copied.{% else %}Review the matching source-row preview below, then use the enabled {{ 'Run synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue synchronization' }} button above. Your selected filters, scope, and limit will be applied.{% endif %}</span>
+  </div>
+  {% if not has_errors %}<div class="validation-final-action"><div><strong>Ready to synchronize</strong><span>Uses the validated source rows and current run settings.</span></div><button type="submit" form="sync-form" class="btn btn-primary d-inline-flex align-items-center gap-2" id="queue-button" data-action="execute" onclick="return confirm('{{ 'Run' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue' }} this one-way synchronization? Existing target rows follow the selected write behavior.')">{{ icon('play', 16) }} {{ 'Run synchronization' if config.SYNC_EXECUTION_MODE == 'inline' else 'Queue synchronization' }}</button></div>{% endif %}
   <div class="bulk-validation-list">
     {% for item in results %}
       <div class="bulk-validation-item {% if item.result.errors %}has-error{% endif %}">
@@ -229,9 +229,11 @@
       {% if item.result.errors %}
       <ul>{% for error in item.result.errors %}<li>{{ error }}</li>{% endfor %}</ul>
       {% else %}
+      {% set filter_rules = selected_table_filters.get(item.table, []) %}
+      {% if filter_rules %}<div class="validation-filter-summary"><strong>Source filter{{ '' if filter_rules|length == 1 else 's' }}:</strong> {% for rule in filter_rules %}<span>{{ rule.column }} {{ rule.operator|replace('_', ' ') }}{% if rule.value %} {{ rule.value }}{% endif %}{% if rule.json_path %} at {{ rule.json_path }}{% endif %}</span>{% if not loop.last %}<i>AND</i>{% endif %}{% endfor %}</div>{% endif %}
       <div class="bulk-validation-metrics"><span>Source <strong>{{ item.result.source_count }}</strong></span><span>Target <strong>{{ item.result.target_count }}</strong></span><span>New <strong>{{ item.result.new_count }}</strong></span><span>Existing <strong>{{ item.result.existing_count }}</strong></span></div>
       {% if item.result.preview_rows %}
-      <details class="mt-2"><summary>Preview first {{ item.result.preview_rows|length }} matching source rows</summary><div class="table-responsive mt-2"><table class="table table-sm"><thead><tr>{% for column in item.result.preview_rows[0].keys() %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in item.result.preview_rows %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div><div class="small text-muted">Sensitive columns are masked.</div></details>
+      <details class="validation-preview mt-2" {% if results|length == 1 %}open{% endif %}><summary><span>Preview matching source rows</span><small>First {{ item.result.preview_rows|length }} row{{ '' if item.result.preview_rows|length == 1 else 's' }} · Scroll for more columns</small></summary><div class="validation-preview-scroll" tabindex="0" aria-label="Scrollable source row preview"><table class="table table-sm"><thead><tr>{% for column in item.result.preview_rows[0].keys() %}<th>{{ column }}</th>{% endfor %}</tr></thead><tbody>{% for row in item.result.preview_rows %}<tr>{% for value in row.values() %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div><div class="validation-preview-note">Recommendation: confirm key IDs, dates, and filtered values before running. Sensitive columns are masked.</div></details>
       {% endif %}
       {% endif %}
     </div>
@@ -280,11 +282,40 @@
   const tableFilterInput = document.getElementById('table-filter-rules');
   const incrementalInput = document.getElementById('table-incremental-columns');
   const tableFilterEditors = document.getElementById('table-filter-editors');
+  const rowLimitInput = document.getElementById('row-limit');
+  const incrementalSettings = document.getElementById('incremental-settings');
+  const syncScopeInputs = Array.from(document.querySelectorAll('input[name="sync_scope"]'));
+  const syncForm = document.getElementById('sync-form');
+  let validationReady = syncForm && syncForm.dataset.validationReady === 'true';
   let tableFilters = tableFilterInput ? JSON.parse(tableFilterInput.value || '{}') : {};
   let incrementalColumns = incrementalInput ? JSON.parse(incrementalInput.value || '{}') : {};
   const operators = [['equals', 'equals'], ['not_equals', 'does not equal'], ['contains', 'contains'], ['starts_with', 'starts with'], ['in', 'in list'], ['between', 'between'], ['is_empty', 'is empty'], ['is_not_empty', 'is not empty'], ['json_path_equals', 'JSON path equals'], ['json_path_contains', 'JSON path contains'], ['json_path_exists', 'JSON path exists']];
 
   function saveTableFilters() { if (tableFilterInput) tableFilterInput.value = JSON.stringify(tableFilters); if (incrementalInput) incrementalInput.value = JSON.stringify(incrementalColumns); }
+  function syncScope() { const selected = syncScopeInputs.find(function (input) { return input.checked; }); return selected ? selected.value : 'full'; }
+  function invalidateValidation() { validationReady = false; }
+  function selectedTableOptions() { return tableCheckboxes.filter(function (checkbox) { return checkbox.checked; }); }
+  function renderIncrementalSettings() {
+    if (!incrementalSettings || !tablePicker) return;
+    const selected = selectedTableOptions();
+    const incremental = syncScope() === 'incremental';
+    incrementalSettings.classList.toggle('d-none', !incremental);
+    incrementalSettings.replaceChildren();
+    if (!incremental) return;
+    const help = document.createElement('p'); help.className = 'sync-scope-help'; help.textContent = 'Choose a reliable date, time, or increasing numeric ID column for each selected table.'; incrementalSettings.appendChild(help);
+    selected.forEach(function (checkbox) {
+      const option = checkbox.closest('.table-picker-option');
+      let columns = []; try { columns = JSON.parse(option.dataset.filterColumns || '[]'); } catch (error) {}
+      const row = document.createElement('label'); row.className = 'sync-incremental-row';
+      const name = document.createElement('strong'); name.textContent = checkbox.value;
+      const select = document.createElement('select'); select.className = 'form-select form-select-sm';
+      select.add(new Option('Choose checkpoint column', ''));
+      columns.forEach(function (item) { select.add(new Option(item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); });
+      select.value = incrementalColumns[checkbox.value] || '';
+      select.addEventListener('change', function () { if (select.value) incrementalColumns[checkbox.value] = select.value; else delete incrementalColumns[checkbox.value]; saveTableFilters(); invalidateValidation(); renderSyncSummary(selectedTableOptions(), source.value === target.value); });
+      row.append(name, select); incrementalSettings.appendChild(row);
+    });
+  }
   function renderTableFilters() {
     if (!tableFilterEditors || !tablePicker) return;
     const selected = tableCheckboxes.filter(function (checkbox) { return checkbox.checked; });
@@ -294,10 +325,12 @@
       const name = checkbox.value;
       const option = checkbox.closest('.table-picker-option');
       let columns = []; try { columns = JSON.parse(option.dataset.filterColumns || '[]'); } catch (error) {}
-      const panel = document.createElement('div'); panel.className = 'card card-body mb-2';
-      const title = document.createElement('strong'); title.textContent = name + ' filters'; panel.appendChild(title);
-      const incremental = document.createElement('select'); incremental.className = 'form-select form-select-sm mt-2'; incremental.add(new Option('Full sync (no checkpoint)', '')); columns.forEach(function (item) { incremental.add(new Option('Incremental by ' + item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); }); incremental.value = incrementalColumns[name] || '';
-      incremental.addEventListener('change', function () { if (incremental.value) incrementalColumns[name] = incremental.value; else delete incrementalColumns[name]; saveTableFilters(); renderSyncSummary(tableCheckboxes.filter(function (box) { return box.checked; }), source.value === target.value); }); panel.appendChild(incremental);
+      const panel = document.createElement('div'); panel.className = 'card card-body mb-2 sync-filter-panel';
+      const header = document.createElement('div'); header.className = 'sync-filter-panel-header';
+      const title = document.createElement('strong'); title.textContent = name;
+      const state = document.createElement('span'); state.className = 'sync-filter-panel-state';
+      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'btn btn-link btn-sm sync-filter-clear'; clear.textContent = 'Clear filters';
+      header.append(title, state, clear); panel.appendChild(header);
       const rules = tableFilters[name] || [];
       const addRule = function (rule) {
         const row = document.createElement('div'); row.className = 'row g-2 mt-1';
@@ -314,7 +347,7 @@
           path.placeholder = isJson ? 'JSON path, e.g. customer.id' : 'Used only for JSON path conditions';
           value.type = isJson ? 'text' : (type.includes('date') && !type.includes('time') ? 'date' : (type.includes('time') ? 'datetime-local' : (/(int|numeric|decimal|float|double|real)/.test(type) ? 'number' : 'text')));
           value.step = value.type === 'number' ? 'any' : '';
-          if (type.includes('bool') && !isJson) { value.setAttribute('list', 'boolean-values'); value.placeholder = 'true or false'; } else { value.removeAttribute('list'); value.placeholder = isJson ? (operator.value === 'json_path_contains' ? 'Valid JSON, e.g. ["vip"]' : 'Value') : 'Value'; }
+          if (type.includes('bool') && !isJson) { value.setAttribute('list', 'boolean-values'); value.placeholder = 'true or false'; } else { value.removeAttribute('list'); value.placeholder = isJson ? (operator.value === 'json_path_contains' ? 'Valid JSON, e.g. ["vip"]' : 'Value') : (operator.value === 'between' ? 'Start, end' : (operator.value === 'in' ? 'One, two, three' : 'Value')); }
           if (operator.value === 'is_empty' || operator.value === 'is_not_empty' || operator.value === 'json_path_exists') { value.disabled = true; } else { value.disabled = false; }
         };
         [column, operator, path, value].forEach(function (input) { input.addEventListener('change', function () { configureValueInput(); sync(); }); input.addEventListener('input', sync); });
@@ -323,11 +356,16 @@
         panel.appendChild(row);
         configureValueInput();
       };
-      const sync = function () { tableFilters[name] = Array.from(panel.querySelectorAll('.row')).map(function (row) { const fields = row.querySelectorAll('select, input'); return {column: fields[0].value, operator: fields[1].value, json_path: fields[2].value, value: fields[3].value}; }).filter(function (rule) { return rule.column; }); saveTableFilters(); renderSyncSummary(tableCheckboxes.filter(function (box) { return box.checked; }), source.value === target.value); };
+      const sync = function () { tableFilters[name] = Array.from(panel.querySelectorAll('.row')).map(function (row) { const fields = row.querySelectorAll('select, input'); return {column: fields[0].value, operator: fields[1].value, json_path: fields[2].value, value: fields[3].value}; }).filter(function (rule) { return rule.column; }); state.textContent = tableFilters[name].length ? tableFilters[name].length + ' filter' + (tableFilters[name].length === 1 ? '' : 's') : 'No filters'; state.classList.toggle('has-filters', tableFilters[name].length > 0); clear.disabled = tableFilters[name].length === 0; saveTableFilters(); invalidateValidation(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); };
       rules.forEach(addRule);
-      const add = document.createElement('button'); add.type = 'button'; add.className = 'btn btn-outline-secondary btn-sm mt-2'; add.textContent = 'Add condition'; add.addEventListener('click', function () { addRule({}); sync(); }); panel.appendChild(add);
+      clear.addEventListener('click', function () { tableFilters[name] = []; invalidateValidation(); renderTableFilters(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); });
+      const add = document.createElement('button'); add.type = 'button'; add.className = 'btn btn-outline-secondary btn-sm mt-2'; add.textContent = 'Add filter'; add.addEventListener('click', function () { addRule({}); sync(); }); panel.appendChild(add);
+      state.textContent = rules.length ? rules.length + ' filter' + (rules.length === 1 ? '' : 's') : 'No filters'; state.classList.toggle('has-filters', rules.length > 0);
+      clear.disabled = rules.length === 0;
       tableFilterEditors.appendChild(panel);
     });
+    const filterSummaryCount = document.getElementById('filter-summary-count');
+    if (filterSummaryCount) { const count = Object.values(tableFilters).reduce(function (total, rules) { return total + rules.length; }, 0); filterSummaryCount.textContent = count ? count + ' active filter' + (count === 1 ? '' : 's') : 'No filters'; }
     saveTableFilters();
   }
 
@@ -352,10 +390,11 @@
     document.getElementById('summary-tables').textContent = names.length ? names.length + ' selected' : 'None selected';
     document.getElementById('summary-filters').textContent = filtered.length ? filtered.length + ' table' + (filtered.length === 1 ? '' : 's') + ' filtered' : 'None';
     document.getElementById('summary-incremental').textContent = incremental.length ? incremental.join(', ') : 'Full sync';
+    document.getElementById('summary-limit').textContent = rowLimitInput && rowLimitInput.value ? rowLimitInput.value + ' per table' : 'No limit';
     const selectedMode = document.querySelector('input[name="sync_mode"]:checked');
     document.getElementById('summary-mode').textContent = selectedMode && selectedMode.value === 'upsert' ? 'Upsert existing records' : 'Add new records only';
     const state = document.getElementById('summary-ready-state');
-    const ready = names.length > 0 && !invalidDirection;
+    const ready = names.length > 0 && !invalidDirection && (syncScope() === 'full' || names.every(function (name) { return incrementalColumns[name]; }));
     state.textContent = ready ? 'Ready to validate' : 'Not ready';
     state.className = 'badge ' + (ready ? 'text-bg-success' : 'text-bg-secondary');
   }
@@ -368,6 +407,7 @@
       ? tableCheckboxes.filter(function (checkbox) { return checkbox.checked; })
       : (table && table.value.trim() ? [table.value.trim()] : []);
     const missingTable = selectedTables.length === 0;
+    const missingIncrementalColumns = syncScope() === 'incremental' && selectedTables.some(function (table) { return !incrementalColumns[table.value || table]; });
     const productionTarget = target.options[target.selectedIndex] && target.options[target.selectedIndex].dataset.environment === 'production';
     if (productionConfirmation) productionConfirmation.classList.toggle('d-none', !productionTarget);
     const allSelectedCyclic = selectedTables.length > 0 && cyclicTables.length > 0 && selectedTables.every(function (checkbox) {
@@ -375,8 +415,13 @@
     });
     error.classList.toggle('d-none', !invalidDirection);
     const confirmedProduction = !productionTarget || (targetConfirmation && targetConfirmation.value.trim() === target.options[target.selectedIndex].dataset.name);
-    if (dryRun) dryRun.disabled = invalidDirection || missingTable;
-    if (queue) queue.disabled = invalidDirection || missingTable || allSelectedCyclic || !confirmedProduction;
+    const incrementalRequirement = document.getElementById('incremental-requirement');
+    if (incrementalRequirement) incrementalRequirement.classList.toggle('d-none', !missingIncrementalColumns);
+    if (dryRun) dryRun.disabled = invalidDirection || missingTable || missingIncrementalColumns;
+    const validationGate = document.getElementById('sync-validation-gate');
+    if (queue) queue.disabled = invalidDirection || missingTable || missingIncrementalColumns || allSelectedCyclic || !confirmedProduction || !validationReady;
+    if (validationGate) validationGate.textContent = missingIncrementalColumns ? 'Choose all checkpoint columns before validation.' : (validationReady ? 'Validation passed. Ready to synchronize.' : 'Run validation to enable synchronization.');
+    if (validationGate) validationGate.classList.toggle('is-ready', validationReady);
     if (selectedCount) selectedCount.textContent = selectedTables.length;
     if (summary) {
       summary.classList.toggle('d-none', missingTable);
@@ -394,6 +439,7 @@
       if (dependencyGuidanceText) dependencyGuidanceText.textContent = missingParents.size ? Array.from(missingParents).join(', ') + ' must be synchronized first or selected in this batch.' : '';
       dependencyGuidance.dataset.parents = Array.from(missingParents).join('|');
     }
+    renderIncrementalSettings();
     renderTableFilters();
     renderSyncSummary(selectedTables, invalidDirection);
   }
@@ -402,6 +448,9 @@
     tableOptions.forEach(function (item) {
       const selected = item.querySelector('.table-checkbox').checked;
       item.classList.toggle('selected', selected);
+      const filterStatus = item.querySelector('[data-filter-status]');
+      const ruleCount = (tableFilters[item.dataset.tableName] || []).length;
+      if (filterStatus) { filterStatus.textContent = ruleCount ? ruleCount + ' filter' + (ruleCount === 1 ? '' : 's') : 'No filter'; filterStatus.classList.toggle('has-filters', ruleCount > 0); }
     });
   }
 
@@ -429,14 +478,16 @@
     updateState();
   }
 
-  source.addEventListener('change', invalidateTablePicker);
-  target.addEventListener('change', invalidateTablePicker);
+  source.addEventListener('change', function () { invalidateValidation(); invalidateTablePicker(); });
+  target.addEventListener('change', function () { invalidateValidation(); invalidateTablePicker(); });
   if (table) {
-    table.addEventListener('input', updateState);
-    table.addEventListener('change', updateState);
+    table.addEventListener('input', function () { invalidateValidation(); updateState(); });
+    table.addEventListener('change', function () { invalidateValidation(); updateState(); });
   }
-  document.querySelectorAll('input[name="sync_mode"]').forEach(function (input) { input.addEventListener('change', updateState); });
+  document.querySelectorAll('input[name="sync_mode"]').forEach(function (input) { input.addEventListener('change', function () { document.querySelectorAll('input[name="sync_mode"]').forEach(function (choice) { choice.closest('.sync-mode-option').classList.toggle('selected', choice.checked); }); invalidateValidation(); updateState(); }); });
+  syncScopeInputs.forEach(function (input) { input.addEventListener('change', function () { syncScopeInputs.forEach(function (choice) { choice.closest('.sync-mode-option').classList.toggle('selected', choice.checked); }); if (syncScope() === 'full') incrementalColumns = {}; saveTableFilters(); invalidateValidation(); updateState(); }); });
   if (targetConfirmation) targetConfirmation.addEventListener('input', updateState);
+  if (rowLimitInput) rowLimitInput.addEventListener('input', function () { invalidateValidation(); updateState(); });
   if (tablePicker) {
       document.getElementById('table-source-name').textContent = source.options[source.selectedIndex].dataset.database;
       const actionButtons = [dryRun, exportReport, saveProfile, queue, bulkSync].filter(Boolean);
@@ -450,25 +501,24 @@
       tableCheckboxes.forEach(function (checkbox) {
         checkbox.addEventListener('change', function () {
           syncVisualSelection();
-          updateState();
+          invalidateValidation(); updateState();
         });
       });
       document.getElementById('select-all-tables').addEventListener('click', function () {
         tableCheckboxes.forEach(function (checkbox) { checkbox.checked = true; });
         syncVisualSelection();
-        updateState();
+        invalidateValidation(); updateState();
     });
     document.getElementById('clear-tables').addEventListener('click', function () {
       tableCheckboxes.forEach(function (checkbox) { checkbox.checked = false; });
       syncVisualSelection();
-      updateState();
+        invalidateValidation(); updateState();
     });
     if (addParentTables) addParentTables.addEventListener('click', function () {
       const parents = (dependencyGuidance.dataset.parents || '').split('|').filter(Boolean);
       tableCheckboxes.forEach(function (checkbox) { if (parents.includes(checkbox.value)) checkbox.checked = true; });
-      syncVisualSelection(); updateState();
+      syncVisualSelection(); invalidateValidation(); updateState();
     });
-    const syncForm = document.getElementById('sync-form');
     if (syncForm) {
       syncForm.addEventListener('submit', function (event) {
         const submitter = event.submitter;
@@ -508,7 +558,7 @@
     const sourceValue = source.value;
     source.value = target.value;
     target.value = sourceValue;
-    invalidateTablePicker();
+    invalidateValidation(); invalidateTablePicker();
   });
   if (profileSelect) profileSelect.addEventListener('change', function () { if (profileSelect.value) window.location.href = '{{ url_for("sync.create") }}?profile_id=' + encodeURIComponent(profileSelect.value); });
   updateState();

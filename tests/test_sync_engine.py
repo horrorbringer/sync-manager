@@ -41,6 +41,56 @@ def test_dry_run_applies_structured_source_filters(monkeypatch):
     assert result["new_count"] == 1
 
 
+def test_dry_run_honors_row_limit(monkeypatch):
+    from sqlalchemy import Column, Integer, MetaData, Table, create_engine
+
+    source_engine = create_engine("sqlite:///:memory:")
+    target_engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    tickets = Table("tickets", metadata, Column("id", Integer, primary_key=True))
+    metadata.create_all(source_engine)
+    metadata.create_all(target_engine)
+    with source_engine.begin() as connection:
+        connection.execute(tickets.insert(), [{"id": 1}, {"id": 2}, {"id": 3}])
+    monkeypatch.setattr(engine, "connection_engine", lambda config: source_engine if config == "source" else target_engine)
+
+    result = engine.dry_run("source", "target", "tickets", row_limit=2)
+
+    assert result["source_count"] == 2
+    assert result["new_count"] == 2
+
+
+def test_limited_full_sync_preview_continues_after_saved_primary_key(app, monkeypatch):
+    from sqlalchemy import Column, Integer, MetaData, Table, create_engine
+    from sync_manager import db
+    from sync_manager.models import DatabaseConnection, SyncJob, User
+
+    source_engine = create_engine("sqlite:///:memory:")
+    target_engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    tickets = Table("tickets", metadata, Column("id", Integer, primary_key=True))
+    metadata.create_all(source_engine)
+    metadata.create_all(target_engine)
+    with source_engine.begin() as connection:
+        connection.execute(tickets.insert(), [{"id": value} for value in range(1, 6)])
+
+    with app.app_context():
+        source = DatabaseConnection(name="limited-source", host="localhost", database_name="source", username="root", encrypted_password="x")
+        target = DatabaseConnection(name="limited-target", host="localhost", database_name="target", username="root", encrypted_password="x")
+        user = db.session.scalar(db.select(User).filter_by(username="admin"))
+        job = SyncJob(source=source, target=target, table_name="tickets", sync_mode="insert_only", row_limit=2, initiated_by=user)
+        db.session.add_all([source, target, job])
+        db.session.commit()
+        engine._save_limited_full_checkpoint(job, [], 2)
+        db.session.commit()
+
+        monkeypatch.setattr(engine, "connection_engine", lambda config: source_engine if config == source else target_engine)
+        result = engine.dry_run(source, target, "tickets", row_limit=2)
+
+    assert result["source_count"] == 2
+    assert result["preview_rows"] == [{"id": 3}, {"id": 4}]
+
+
 def test_filter_rejects_unknown_columns():
     from sqlalchemy import Column, Integer, MetaData, Table
 
@@ -51,6 +101,33 @@ def test_filter_rejects_unknown_columns():
         assert "Invalid filter" in str(exc)
     else:
         raise AssertionError("Expected invalid filter to be rejected")
+
+
+def test_direct_foreign_key_preflight_reports_missing_target_parent():
+    from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table, create_engine
+
+    target_engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    source_entries = Table("source_entries", metadata, Column("id", Integer, primary_key=True))
+    custom_form_entries = Table(
+        "custom_form_entries",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("source_entry_id", Integer, ForeignKey("source_entries.id")),
+    )
+    metadata.create_all(target_engine)
+
+    errors = engine._direct_foreign_key_preflight_errors(
+        target_engine,
+        {"preview": [{"column": "source_entry_id", "referred_table": "source_entries", "explicit": False}]},
+        "custom_form_entries",
+        [{"id": 1, "source_entry_id": 75}],
+    )
+
+    assert errors == [
+        "Table 'custom_form_entries' references missing target row in 'source_entries' through 'source_entry_id': 75. "
+        "Sync the parent table first, or include those parent rows in its filter/limit."
+    ]
 
 
 def test_postgresql_jsonb_path_filter_compiles_without_raw_sql():
@@ -67,6 +144,31 @@ def test_postgresql_jsonb_path_filter_compiles_without_raw_sql():
 
     compiled = str(select(table).where(*clauses).compile(dialect=postgresql.dialect()))
     assert "#>>" in compiled
+
+
+def test_postgresql_upsert_uses_excluded_values():
+    from sqlalchemy import Column, Integer, MetaData, String, Table
+    from sqlalchemy.dialects import postgresql
+
+    table = Table(
+        "tickets",
+        MetaData(),
+        Column("id", Integer, primary_key=True),
+        Column("status", String),
+    )
+
+    statement, has_update_columns = engine._target_write_statement(
+        table,
+        [{"id": 1, "status": "open"}],
+        "upsert",
+        ["id"],
+        "postgresql",
+    )
+
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "ON CONFLICT (id) DO UPDATE" in compiled
+    assert "status = excluded.status" in compiled
+    assert has_update_columns is True
 
 
 class FakeInspector:

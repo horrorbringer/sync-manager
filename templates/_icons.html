@@ -20,3 +20,19 @@
 } %}
 <svg class="app-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ paths.get(name, '')|safe }}</svg>
 {%- endmacro %}
+
+{% macro db_icon(db_type, size=18) -%}
+{% set colors = {
+  'mysql': {'bg': '#e3f2fd', 'fg': '#00758f'},
+  'postgresql': {'bg': '#e8f0f8', 'fg': '#336791'}
+} %}
+{% set c = colors.get(db_type, {}) %}
+{% if c %}
+<svg class="db-type-icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 20 20" aria-hidden="true" style="flex:0 0 auto;display:inline-block">
+  <circle cx="10" cy="10" r="9" fill="{{ c.bg }}" stroke="none"/>
+  <text x="10" y="12.7" text-anchor="middle" font-size="6.4" font-weight="700" fill="{{ c.fg }}" font-family="Arial,Helvetica,sans-serif" stroke="none">{{ 'MY' if db_type == 'mysql' else 'PG' }}</text>
+</svg>
+{% else %}
+{{ icon('database', size) }}
+{% endif %}
+{%- endmacro %}

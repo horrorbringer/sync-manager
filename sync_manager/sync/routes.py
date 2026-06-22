@@ -96,10 +96,30 @@ def _selected_incremental_columns():
     return {table: column for table, column in value.items() if column}
 
 
-def _dry_run_with_filters(source, target, table_name, filter_rules, incremental_column=None):
-    if filter_rules or incremental_column:
-        return dry_run(source, target, table_name, filter_rules=filter_rules, incremental_column=incremental_column)
-    return dry_run(source, target, table_name)
+def _selected_row_limit():
+    raw = request.form.get("row_limit", "").strip()
+    if not raw:
+        return None
+    try:
+        row_limit = int(raw)
+    except ValueError as exc:
+        raise ValueError("Maximum rows must be a whole number.") from exc
+    if not 1 <= row_limit <= 1_000_000:
+        raise ValueError("Maximum rows must be between 1 and 1,000,000.")
+    return row_limit
+
+
+def _dry_run_with_filters(source, target, table_name, filter_rules, incremental_column=None, row_limit=None):
+    if not filter_rules and not incremental_column and not row_limit:
+        return dry_run(source, target, table_name)
+    return dry_run(
+        source,
+        target,
+        table_name,
+        filter_rules=filter_rules,
+        incremental_column=incremental_column,
+        row_limit=row_limit,
+    )
 
 
 def _all_table_names(table_details):
@@ -192,14 +212,25 @@ def create():
     try:
         selected_table_filters = _selected_table_filters()
         selected_incremental_columns = _selected_incremental_columns()
+        selected_row_limit = _selected_row_limit()
         unknown_filter_tables = sorted(set(selected_table_filters) - set(selected_tables))
         unknown_incremental_tables = sorted(set(selected_incremental_columns) - set(selected_tables))
         if unknown_filter_tables or unknown_incremental_tables:
             raise ValueError("Filters were supplied for unselected tables: {}".format(", ".join(unknown_filter_tables)))
+        sync_scope = request.form.get("sync_scope") or ("incremental" if selected_incremental_columns else "full")
+        if sync_scope not in {"full", "incremental"}:
+            raise ValueError("Invalid sync scope.")
+        if sync_scope == "full":
+            selected_incremental_columns = {}
+        else:
+            missing_incremental_columns = sorted(set(selected_tables) - set(selected_incremental_columns))
+            if missing_incremental_columns:
+                raise ValueError("Incremental sync requires a checkpoint column for every selected table: {}".format(", ".join(missing_incremental_columns)))
     except ValueError as exc:
         filter_error = str(exc)
         selected_table_filters = {}
         selected_incremental_columns = {}
+        selected_row_limit = None
     if selected_sync_mode not in {"upsert", "insert_only"}:
         selected_sync_mode = "insert_only"
     if request.method == "GET" and request.args.get("profile_id", type=int):
@@ -302,7 +333,7 @@ def create():
                 skipped_noop_tables = []
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
+                        table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
                     except Exception as exc:
                         table_preview = {"errors": [str(exc)]}
                     if _is_empty_preview(table_preview):
@@ -359,6 +390,7 @@ def create():
                         sync_mode=selected_sync_mode,
                         filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                         incremental_column=selected_incremental_columns.get(table_name),
+                        row_limit=selected_row_limit,
                         cycle_sync=False,
                         initiated_by=current_user,
                     )
@@ -382,6 +414,7 @@ def create():
                         sync_mode=selected_sync_mode,
                         filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                         incremental_column=selected_incremental_columns.get(table_name),
+                        row_limit=selected_row_limit,
                         cycle_sync=True,
                         initiated_by=current_user,
                     )
@@ -457,7 +490,7 @@ def create():
                 skipped_noop_tables = []
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_result = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
+                        table_result = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
                     except Exception as exc:
                         table_result = {"errors": [str(exc)]}
                     if _is_empty_preview(table_result):
@@ -544,7 +577,7 @@ def create():
             skipped_noop_tables = []
             for table_name in dependency_state["ordered_tables"]:
                 try:
-                    table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name))
+                    table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
                 except Exception as exc:
                     table_preview = {"errors": [str(exc)]}
                 if _is_empty_preview(table_preview):
@@ -601,6 +634,7 @@ def create():
                     sync_mode=selected_sync_mode,
                     filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                     incremental_column=selected_incremental_columns.get(table_name),
+                    row_limit=selected_row_limit,
                     cycle_sync=False,
                     initiated_by=current_user,
                 )
@@ -624,6 +658,7 @@ def create():
                     sync_mode=selected_sync_mode,
                     filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                     incremental_column=selected_incremental_columns.get(table_name),
+                    row_limit=selected_row_limit,
                     cycle_sync=True,
                     initiated_by=current_user,
                 )
@@ -805,6 +840,7 @@ def retry_job(job_id):
         sync_mode=original.sync_mode,
         filter_rules=original.filter_rules,
         incremental_column=original.incremental_column,
+        row_limit=original.row_limit,
         cycle_sync=original.cycle_sync,
         initiated_by=current_user,
     )
