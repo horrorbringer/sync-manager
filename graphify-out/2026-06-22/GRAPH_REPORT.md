@@ -1,11 +1,11 @@
 # Graph Report - sync-data  (2026-06-22)
 
 ## Corpus Check
-- 36 files · ~24,638 words
+- 36 files · ~24,901 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 291 nodes · 622 edges · 17 communities (16 shown, 1 thin omitted)
+- 294 nodes · 628 edges · 17 communities (16 shown, 1 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 5 edges (avg confidence: 0.5)
 - Token cost: 0 input · 0 output
 
@@ -42,25 +42,25 @@
 ## Surprising Connections (you probably didn't know these)
 - `FakeResponse` --uses--> `User`  [INFERRED]
   tests/test_notifications.py → sync_manager/models.py
+- `test_viewer_cannot_access_notification_settings()` --calls--> `User`  [EXTRACTED]
+  tests/test_notifications.py → sync_manager/models.py
 - `FakeInspector` --uses--> `User`  [INFERRED]
   tests/test_sync_engine.py → sync_manager/models.py
 - `test_connection_can_be_disabled()` --calls--> `DatabaseConnection`  [EXTRACTED]
   tests/test_security.py → sync_manager/models.py
 - `FakeInspector` --uses--> `DatabaseConnection`  [INFERRED]
   tests/test_sync_engine.py → sync_manager/models.py
-- `FakeInspector` --uses--> `SyncJob`  [INFERRED]
-  tests/test_sync_engine.py → sync_manager/models.py
 
 ## Import Cycles
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/sync/engine.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/main/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/service.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/cli.py -> sync_manager/models.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/sync/engine.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/notifications/service.py -> sync_manager/models.py -> sync_manager/__init__.py`
@@ -72,27 +72,27 @@
 
 ### Community 0 - "Models and Audit Logs"
 Cohesion: 0.08
-Nodes (32): AuditLog, DatabaseConnection, SyncJob, test_audit_logs_paginate(), test_dashboard_jobs_paginate(), test_dashboard_shows_short_upsert_label(), test_referenced_connection_cannot_be_deleted(), _failed_job() (+24 more)
+Nodes (31): DatabaseConnection, SyncJob, test_audit_logs_paginate(), test_dashboard_jobs_paginate(), test_dashboard_shows_short_upsert_label(), test_referenced_connection_cannot_be_deleted(), _failed_job(), test_completed_job_reports_full_progress_even_without_row_changes() (+23 more)
 
 ### Community 1 - "Sync Engine"
 Cohesion: 0.12
-Nodes (37): test(), _advance_postgresql_sequence(), _append_drop_detail(), _candidate_scalar_values(), _collect_mysql_warnings(), connection_engine(), _cursor_value(), _dependency_analysis() (+29 more)
+Nodes (37): _advance_postgresql_sequence(), _append_drop_detail(), _candidate_scalar_values(), _collect_mysql_warnings(), connection_engine(), _cursor_value(), _dependency_analysis(), dependency_cycle_tables() (+29 more)
 
 ### Community 2 - "Application and Workers"
 Cohesion: 0.11
-Nodes (14): audit_logs(), dashboard(), _paginate(), init_notification_executor(), init_celery(), register_commands(), create_app(), User (+6 more)
+Nodes (13): audit_logs(), dashboard(), _paginate(), init_notification_executor(), init_celery(), register_commands(), create_app(), User (+5 more)
 
 ### Community 3 - "Notifications and Security"
-Cohesion: 0.13
-Nodes (20): settings(), test_message(), get_settings(), _send_in_app(), send_telegram_message(), NotificationSettings, decrypt_secret(), encrypt_secret() (+12 more)
+Cohesion: 0.14
+Nodes (21): settings(), test_message(), get_settings(), _send_in_app(), send_telegram_message(), NotificationSettings, decrypt_secret(), encrypt_secret() (+13 more)
 
 ### Community 4 - "Sync Profiles and Routes"
 Cohesion: 0.13
 Nodes (22): dependency_report(), expand_tables_with_dependencies(), incremental_checkpoint_status(), SyncProfile, _all_table_names(), create(), _dry_run_with_filters(), duplicate_profile() (+14 more)
 
 ### Community 5 - "Authentication and Connections"
-Cohesion: 0.17
-Nodes (17): login(), logout(), _connection_fields(), _connection_form_values(), create(), delete(), edit(), index() (+9 more)
+Cohesion: 0.14
+Nodes (20): login(), logout(), _connection_fields(), _connection_form_values(), create(), delete(), edit(), index() (+12 more)
 
 ### Community 6 - "Sync Engine Tests"
 Cohesion: 0.09
@@ -121,14 +121,14 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `SyncJob` connect `Models and Audit Logs` to `Sync Engine`, `Application and Workers`, `Notifications and Security`, `Sync Profiles and Routes`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
   _High betweenness centrality (0.123) - this node is a cross-community bridge._
 - **Why does `DatabaseConnection` connect `Models and Audit Logs` to `Application and Workers`, `Notifications and Security`, `Sync Profiles and Routes`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
-  _High betweenness centrality (0.113) - this node is a cross-community bridge._
+  _High betweenness centrality (0.112) - this node is a cross-community bridge._
 - **Why does `User` connect `Application and Workers` to `Models and Audit Logs`, `Notifications and Security`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
-  _High betweenness centrality (0.100) - this node is a cross-community bridge._
+  _High betweenness centrality (0.099) - this node is a cross-community bridge._
 - **Are the 2 inferred relationships involving `User` (e.g. with `FakeResponse` and `FakeInspector`) actually correct?**
   _`User` has 2 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Build safe SQLAlchemy predicates from persisted filter rules; never accept SQL t`, `Resume a limited full sync by primary key without changing normal full-sync sema`, `graphify` to the rest of the system?**
-  _36 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Build safe SQLAlchemy predicates from persisted filter rules; never accept SQL t`, `Resume a limited full sync by primary key without changing normal full-sync sema`, `Report missing direct-copy parent rows before a target write can hit an FK viola` to the rest of the system?**
+  _37 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Models and Audit Logs` be split into smaller, more focused modules?**
-  _Cohesion score 0.07535460992907801 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07922705314009662 - nodes in this community are weakly interconnected._
 - **Should `Sync Engine` be split into smaller, more focused modules?**
   _Cohesion score 0.1241565452091768 - nodes in this community are weakly interconnected._

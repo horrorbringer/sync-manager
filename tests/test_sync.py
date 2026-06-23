@@ -4,6 +4,7 @@ from werkzeug.datastructures import MultiDict
 
 from sync_manager import db
 from sync_manager.models import DatabaseConnection, SyncJob, User
+from sync_manager.sync.routes import _remember_planned_parent_values
 
 
 def _failed_job(app, table_name="customers", sync_mode="insert_only"):
@@ -35,6 +36,30 @@ def _failed_job(app, table_name="customers", sync_mode="insert_only"):
         db.session.add(job)
         db.session.commit()
         return job.id
+
+
+def test_incremental_parent_preview_values_are_available_to_dependent_validation():
+    planned_parent_values = {}
+
+    _remember_planned_parent_values(
+        planned_parent_values,
+        "academic_years",
+        {"errors": [], "_source_primary_key_values": {1, 2, 3, 4}},
+    )
+
+    assert planned_parent_values == {"academic_years": {1, 2, 3, 4}}
+
+
+def test_invalid_parent_preview_values_are_not_available_to_dependent_validation():
+    planned_parent_values = {}
+
+    _remember_planned_parent_values(
+        planned_parent_values,
+        "academic_years",
+        {"errors": ["Target table is missing"], "_source_primary_key_values": {1, 2, 3, 4}},
+    )
+
+    assert planned_parent_values == {}
 
 
 def test_failed_job_can_be_retried(app, client, monkeypatch):

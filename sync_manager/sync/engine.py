@@ -22,6 +22,10 @@ _SENSITIVE_COLUMN_MARKERS = ("password", "secret", "token", "api_key", "access_k
 _LIMITED_FULL_CHECKPOINT = "__limited_full_primary_key__"
 
 
+def _is_supported_incremental_type(column_type):
+    return getattr(column_type, "_type_affinity", None) in {DateTime, Date, Integer}
+
+
 def _preview_value(column_name, value):
     if any(marker in column_name.lower() for marker in _SENSITIVE_COLUMN_MARKERS):
         return "••••••"
@@ -93,7 +97,7 @@ def _incremental_clause(source_table, source_config, target_config, table_name, 
     if len(pk_names) != 1:
         raise RuntimeError("Incremental sync requires a table with one primary-key column")
     column = source_table.c[incremental_column]
-    if column.type._type_affinity not in {DateTime, Date, Integer}:
+    if not _is_supported_incremental_type(column.type):
         raise RuntimeError("Incremental sync columns must be a date, datetime, or integer column")
     _cursor_value(column, "0" if column.type._type_affinity is Integer else "1970-01-01")
     if not has_app_context():
@@ -328,11 +332,18 @@ def discover_tables(source_config, target_config):
             mapping_state = "mapped"
         else:
             mapping_state = "mapped"
+        filter_columns = [{"name": column["name"], "type": str(column.get("type", ""))} for column in columns]
+        checkpoint_columns = [
+            {"name": column["name"], "type": str(column.get("type", ""))}
+            for column in columns
+            if _is_supported_incremental_type(column.get("type"))
+        ]
         details.append(
             {
                 "name": table_name,
                 "column_count": len(columns),
-                "filter_columns": [{"name": column["name"], "type": str(column.get("type", ""))} for column in columns],
+                "filter_columns": filter_columns,
+                "checkpoint_columns": checkpoint_columns,
                 "primary_key": primary_key,
                 "dependencies": dependencies,
                 "mapping_columns": mapping_columns,
@@ -414,7 +425,7 @@ def _foreign_key_mapping_plan(source_inspector, target_inspector, table_name, ma
     return {"preview": preview, "errors": errors}
 
 
-def _direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name, rows):
+def _direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name, rows, planned_parent_values=None):
     """Report missing direct-copy parent rows before a target write can hit an FK violation."""
     errors = []
     for mapping in mapping_plan.get("preview", []):
@@ -431,7 +442,11 @@ def _direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name
         parent_pk = parent_table.c[parent_pk_names[0]]
         with target_engine.connect() as target:
             present = set(target.execute(select(parent_pk).where(parent_pk.in_(values))).scalars())
-        missing = sorted(values - present, key=str)
+        # A dependency-ordered, unrestricted parent table selected in the same
+        # sync will be written before this table.  Its source primary keys are
+        # therefore safe to treat as planned target rows during validation.
+        planned = set((planned_parent_values or {}).get(mapping["referred_table"], ()))
+        missing = sorted(values - present - planned, key=str)
         if missing:
             shown = ", ".join(str(value) for value in missing[:5])
             suffix = "" if len(missing) <= 5 else " (and {} more)".format(len(missing) - 5)
@@ -880,7 +895,15 @@ def expand_tables_with_dependencies(source_config, table_names):
     return expanded
 
 
-def dry_run(source_config, target_config, table_name, filter_rules=None, incremental_column=None, row_limit=None):
+def dry_run(
+    source_config,
+    target_config,
+    table_name,
+    filter_rules=None,
+    incremental_column=None,
+    row_limit=None,
+    planned_parent_values=None,
+):
     source_engine = connection_engine(source_config)
     target_engine = connection_engine(target_config)
     metadata = MetaData()
@@ -922,11 +945,25 @@ def dry_run(source_config, target_config, table_name, filter_rules=None, increme
             table_name,
             mapping_rules=_load_mapping_rules(source_config),
         )
-        errors.extend(_direct_foreign_key_preflight_errors(target_engine, mapping_plan, table_name, source_rows))
+        errors.extend(
+            _direct_foreign_key_preflight_errors(
+                target_engine,
+                mapping_plan,
+                table_name,
+                source_rows,
+                planned_parent_values=planned_parent_values,
+            )
+        )
     except Exception as exc:
         errors.append("Unable to preflight foreign-key references: {}".format(exc))
     if errors:
-        return {"errors": errors, "source_count": source_count, "target_count": target_count, "preview_rows": preview_rows}
+        return {
+            "errors": errors,
+            "source_count": source_count,
+            "target_count": target_count,
+            "preview_rows": preview_rows,
+            "_source_primary_key_values": {key[0] for key in source_keys} if len(pk_names) == 1 else set(),
+        }
     return {
         "errors": [],
         "source_count": source_count,
@@ -934,6 +971,7 @@ def dry_run(source_config, target_config, table_name, filter_rules=None, increme
         "new_count": len(source_keys - target_keys),
         "existing_count": len(source_keys & target_keys),
         "preview_rows": preview_rows,
+        "_source_primary_key_values": {key[0] for key in source_keys} if len(pk_names) == 1 else set(),
     }
 
 

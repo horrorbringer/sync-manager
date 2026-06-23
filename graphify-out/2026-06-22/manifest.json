@@ -100,8 +100,8 @@
     "semantic_hash": "68b329da9893e34099c7d8ad5cb9c940"
   },
   "sync_manager/sync/engine.py": {
-    "mtime": 1782068206.3749444,
-    "ast_hash": "874c9677c979b2c91d81f601be9b6259",
+    "mtime": 1782070394.7959914,
+    "ast_hash": "e81489c52928fd69bec7f0cdeebd7476",
     "semantic_hash": ""
   },
   "sync_manager/sync/routes.py": {
@@ -150,8 +150,8 @@
     "semantic_hash": ""
   },
   "tests/test_sync_engine.py": {
-    "mtime": 1782068246.3136287,
-    "ast_hash": "031caca0d3cd47add53677fdaa4c5e85",
+    "mtime": 1782070331.0243046,
+    "ast_hash": "b45068bef5b21008ea3126aa7a4ca111",
     "semantic_hash": ""
   },
   "tests/test_tasks.py": {
@@ -185,9 +185,9 @@
     "semantic_hash": "b8297683f52de567beaba179ae8cae18"
   },
   "templates/_icons.html": {
-    "mtime": 1782045062.2809532,
-    "ast_hash": "37d20888961dbd5edcd125dd4d29c29d",
-    "semantic_hash": "37d20888961dbd5edcd125dd4d29c29d"
+    "mtime": 1782070343.8173988,
+    "ast_hash": "9f0ef08c4bbe71af32dafbae8107dafc",
+    "semantic_hash": ""
   },
   "templates/auth/login.html": {
     "mtime": 1781197257.5025163,
@@ -195,8 +195,8 @@
     "semantic_hash": "bf8c63e5ca17d4acd942d5c35b8f9de1"
   },
   "templates/base.html": {
-    "mtime": 1782067513.985051,
-    "ast_hash": "f2b07f41e8173e6d86543e69aa0caba0",
+    "mtime": 1782070363.9017525,
+    "ast_hash": "5221ad081702b8fbb52f33efcdb20a81",
     "semantic_hash": ""
   },
   "templates/connections/form.html": {
@@ -205,9 +205,9 @@
     "semantic_hash": "8619625505162d92970e45c70e8e3ae3"
   },
   "templates/connections/index.html": {
-    "mtime": 1782045097.0422776,
-    "ast_hash": "a7c15ba046fb0c9c234158b7bf6dc65d",
-    "semantic_hash": "a7c15ba046fb0c9c234158b7bf6dc65d"
+    "mtime": 1782070351.2968378,
+    "ast_hash": "ffd6ca1d3889158222ac6bae59406346",
+    "semantic_hash": ""
   },
   "templates/main/audit.html": {
     "mtime": 1781250742.3137188,

@@ -99,7 +99,7 @@
         </div>
         <div class="table-picker-list" id="table-picker-list" aria-label="Source tables">
           {% for table in table_details %}
-          <label class="table-picker-option {% if table.name in selected_tables %}selected{% endif %}" data-table-name="{{ table.name }}" data-dependencies="{{ table.dependencies|default([])|join('|') }}" data-filter-columns='{{ table.filter_columns|default([])|tojson }}' data-search="{{ table.name|lower }} {{ table.primary_key|default([])|join(' ')|lower }} {{ table.dependencies|default([])|join(' ')|lower }}">
+          <label class="table-picker-option {% if table.name in selected_tables %}selected{% endif %}" data-table-name="{{ table.name }}" data-dependencies="{{ table.dependencies|default([])|join('|') }}" data-filter-columns='{{ table.filter_columns|default([])|tojson }}' data-checkpoint-columns='{{ table.checkpoint_columns|default([])|tojson }}' data-search="{{ table.name|lower }} {{ table.primary_key|default([])|join(' ')|lower }} {{ table.dependencies|default([])|join(' ')|lower }}">
             <input class="form-check-input table-checkbox" type="checkbox" name="table_names" value="{{ table.name }}" {% if table.name in selected_tables %}checked{% endif %}>
             <span class="table-option-main"><strong>{{ table.name }}</strong><small>{{ table.column_count }} column{{ '' if table.column_count == 1 else 's' }}</small></span>
             <span class="table-option-meta">
@@ -302,19 +302,21 @@
     incrementalSettings.classList.toggle('d-none', !incremental);
     incrementalSettings.replaceChildren();
     if (!incremental) return;
-    const help = document.createElement('p'); help.className = 'sync-scope-help'; help.textContent = 'Choose a reliable date, time, or increasing numeric ID column for each selected table.'; incrementalSettings.appendChild(help);
+    const help = document.createElement('p'); help.className = 'sync-scope-help'; help.textContent = 'Choose a reliable date, datetime, or increasing integer ID column for each selected table.'; incrementalSettings.appendChild(help);
     selected.forEach(function (checkbox) {
       const option = checkbox.closest('.table-picker-option');
-      let columns = []; try { columns = JSON.parse(option.dataset.filterColumns || '[]'); } catch (error) {}
+      let checkpointColumns = []; try { checkpointColumns = JSON.parse(option.dataset.checkpointColumns || '[]'); } catch (error) {}
+      if (incrementalColumns[checkbox.value] && !checkpointColumns.some(function (item) { return item.name === incrementalColumns[checkbox.value]; })) delete incrementalColumns[checkbox.value];
       const row = document.createElement('label'); row.className = 'sync-incremental-row';
       const name = document.createElement('strong'); name.textContent = checkbox.value;
       const select = document.createElement('select'); select.className = 'form-select form-select-sm';
-      select.add(new Option('Choose checkpoint column', ''));
-      columns.forEach(function (item) { select.add(new Option(item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); });
+      select.add(new Option(checkpointColumns.length ? 'Choose checkpoint column' : 'No compatible checkpoint column', ''));
+      checkpointColumns.forEach(function (item) { select.add(new Option(item.name + (item.type ? ' (' + item.type + ')' : ''), item.name)); });
       select.value = incrementalColumns[checkbox.value] || '';
-      select.addEventListener('change', function () { if (select.value) incrementalColumns[checkbox.value] = select.value; else delete incrementalColumns[checkbox.value]; saveTableFilters(); invalidateValidation(); renderSyncSummary(selectedTableOptions(), source.value === target.value); });
+      select.addEventListener('change', function () { if (select.value) incrementalColumns[checkbox.value] = select.value; else delete incrementalColumns[checkbox.value]; saveTableFilters(); invalidateValidation(); updateState(); });
       row.append(name, select); incrementalSettings.appendChild(row);
     });
+    saveTableFilters();
   }
   function renderTableFilters() {
     if (!tableFilterEditors || !tablePicker) return;

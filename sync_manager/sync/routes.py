@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 import csv
 import io
@@ -10,7 +10,7 @@ from ..models import DatabaseConnection, SyncJob, SyncProfile
 from ..notifications.service import notify_async
 from ..security import roles_required
 from .engine import dependency_report, discover_tables, dry_run, expand_tables_with_dependencies, incremental_checkpoint_status, validate_table
-from .tasks import enqueue_job
+from .tasks import enqueue_job, enqueue_jobs_in_order
 
 bp = Blueprint("sync", __name__, url_prefix="/sync")
 
@@ -109,8 +109,16 @@ def _selected_row_limit():
     return row_limit
 
 
-def _dry_run_with_filters(source, target, table_name, filter_rules, incremental_column=None, row_limit=None):
-    if not filter_rules and not incremental_column and not row_limit:
+def _dry_run_with_filters(
+    source,
+    target,
+    table_name,
+    filter_rules,
+    incremental_column=None,
+    row_limit=None,
+    planned_parent_values=None,
+):
+    if not filter_rules and not incremental_column and not row_limit and not planned_parent_values:
         return dry_run(source, target, table_name)
     return dry_run(
         source,
@@ -119,7 +127,17 @@ def _dry_run_with_filters(source, target, table_name, filter_rules, incremental_
         filter_rules=filter_rules,
         incremental_column=incremental_column,
         row_limit=row_limit,
+        planned_parent_values=planned_parent_values,
     )
+
+
+def _remember_planned_parent_values(planned_parent_values, table_name, result):
+    """Make exact, successfully previewed parent rows available to later FK checks."""
+    if result.get("errors"):
+        return
+    values = result.get("_source_primary_key_values") or set()
+    if values:
+        planned_parent_values[table_name] = values
 
 
 def _all_table_names(table_details):
@@ -154,6 +172,28 @@ def _queue_job(job):
         if job.status != "failed":
             job.status = "failed"
             job.error_message = "Unable to start synchronization: {}".format(exc)
+        db.session.commit()
+        return False
+    return True
+
+
+def _queue_jobs_in_order(jobs):
+    """Persist a validated batch before dispatching it as one dependency-ordered run."""
+    db.session.add_all(jobs)
+    db.session.commit()
+    job_ids = [job.id for job in jobs]
+    try:
+        if current_app.config["SYNC_EXECUTION_MODE"] == "inline":
+            for job_id in job_ids:
+                enqueue_job(job_id)
+        else:
+            enqueue_jobs_in_order(job_ids)
+    except Exception as exc:
+        for job_id in job_ids:
+            job = db.session.get(SyncJob, job_id)
+            if job.status == "pending":
+                job.status = "failed"
+                job.error_message = "Unable to start synchronization: {}".format(exc)
         db.session.commit()
         return False
     return True
@@ -331,14 +371,24 @@ def create():
                 cycle_tables = dependency_state["cycle_tables"]
                 skipped_empty_tables = []
                 skipped_noop_tables = []
+                planned_parent_values = {}
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
+                        table_preview = _dry_run_with_filters(
+                            source,
+                            target,
+                            table_name,
+                            selected_table_filters.get(table_name),
+                            selected_incremental_columns.get(table_name),
+                            selected_row_limit,
+                            planned_parent_values,
+                        )
                     except Exception as exc:
                         table_preview = {"errors": [str(exc)]}
                     if _is_empty_preview(table_preview):
                         skipped_empty_tables.append(table_name)
                         continue
+                    _remember_planned_parent_values(planned_parent_values, table_name, table_preview)
                     if _is_insert_only_noop(selected_sync_mode, table_preview):
                         skipped_noop_tables.append(table_name)
                         continue
@@ -394,10 +444,6 @@ def create():
                         cycle_sync=False,
                         initiated_by=current_user,
                     )
-                    if not _queue_job(job):
-                        flash(job.error_message, "danger")
-                        return redirect(url_for("main.dashboard"))
-                    record_audit("sync.queued", "job={} table={}".format(job.id, table_name))
                     queued_tables.append(job)
                 for table_name in cycle_tables:
                     table_result = result_by_table.get(table_name, {})
@@ -418,12 +464,13 @@ def create():
                         cycle_sync=True,
                         initiated_by=current_user,
                     )
-                    if not _queue_job(job):
-                        flash(job.error_message, "danger")
-                        return redirect(url_for("main.dashboard"))
-                    record_audit("sync.queued", "job={} table={}".format(job.id, table_name))
                     queued_tables.append(job)
                 if queued_tables:
+                    if not _queue_jobs_in_order(queued_tables):
+                        flash(queued_tables[0].error_message, "danger")
+                        return redirect(url_for("main.dashboard"))
+                    for job in queued_tables:
+                        record_audit("sync.queued", "job={} table={}".format(job.id, job.table_name))
                     order_text = _format_dependency_order([job.table_name for job in queued_tables])
                     cycle_count = sum(1 for job in queued_tables if job.cycle_sync)
                     summary = "Queued {} table job{} in dependency order: {}. {} cyclic table{} were auto-synced with foreign-key checks disabled.".format(
@@ -488,14 +535,24 @@ def create():
                 cycle_tables = dependency_state["cycle_tables"]
                 skipped_empty_tables = []
                 skipped_noop_tables = []
+                planned_parent_values = {}
                 for table_name in dependency_state["ordered_tables"]:
                     try:
-                        table_result = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
+                        table_result = _dry_run_with_filters(
+                            source,
+                            target,
+                            table_name,
+                            selected_table_filters.get(table_name),
+                            selected_incremental_columns.get(table_name),
+                            selected_row_limit,
+                            planned_parent_values,
+                        )
                     except Exception as exc:
                         table_result = {"errors": [str(exc)]}
                     if _is_empty_preview(table_result):
                         skipped_empty_tables.append(table_name)
                         continue
+                    _remember_planned_parent_values(planned_parent_values, table_name, table_result)
                     if _is_insert_only_noop(selected_sync_mode, table_result):
                         skipped_noop_tables.append(table_name)
                         continue
@@ -575,14 +632,24 @@ def create():
             cycle_tables = dependency_state["cycle_tables"]
             skipped_empty_tables = []
             skipped_noop_tables = []
+            planned_parent_values = {}
             for table_name in dependency_state["ordered_tables"]:
                 try:
-                    table_preview = _dry_run_with_filters(source, target, table_name, selected_table_filters.get(table_name), selected_incremental_columns.get(table_name), selected_row_limit)
+                    table_preview = _dry_run_with_filters(
+                        source,
+                        target,
+                        table_name,
+                        selected_table_filters.get(table_name),
+                        selected_incremental_columns.get(table_name),
+                        selected_row_limit,
+                        planned_parent_values,
+                    )
                 except Exception as exc:
                     table_preview = {"errors": [str(exc)]}
                 if _is_empty_preview(table_preview):
                     skipped_empty_tables.append(table_name)
                     continue
+                _remember_planned_parent_values(planned_parent_values, table_name, table_preview)
                 if _is_insert_only_noop(selected_sync_mode, table_preview):
                     skipped_noop_tables.append(table_name)
                     continue
@@ -638,10 +705,6 @@ def create():
                     cycle_sync=False,
                     initiated_by=current_user,
                 )
-                if not _queue_job(job):
-                    flash(job.error_message, "danger")
-                    return redirect(url_for("main.dashboard"))
-                record_audit("sync.queued", "job={} table={}".format(job.id, table_name))
                 queued_tables.append(job)
             for table_name in cycle_tables:
                 table_result = result_by_table.get(table_name, {})
@@ -662,12 +725,13 @@ def create():
                     cycle_sync=True,
                     initiated_by=current_user,
                 )
-                if not _queue_job(job):
-                    flash(job.error_message, "danger")
-                    return redirect(url_for("main.dashboard"))
-                record_audit("sync.queued", "job={} table={}".format(job.id, table_name))
                 queued_tables.append(job)
             if queued_tables:
+                if not _queue_jobs_in_order(queued_tables):
+                    flash(queued_tables[0].error_message, "danger")
+                    return redirect(url_for("main.dashboard"))
+                for job in queued_tables:
+                    record_audit("sync.queued", "job={} table={}".format(job.id, job.table_name))
                 order_text = _format_dependency_order([job.table_name for job in queued_tables])
                 cycle_count = sum(1 for job in queued_tables if job.cycle_sync)
                 summary = "Queued {} table job{} in dependency order: {}. {} cyclic table{} were auto-synced with foreign-key checks disabled.".format(

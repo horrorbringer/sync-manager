@@ -130,6 +130,31 @@ def test_direct_foreign_key_preflight_reports_missing_target_parent():
     ]
 
 
+def test_direct_foreign_key_preflight_accepts_rows_from_planned_full_parent_sync():
+    from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table, create_engine
+
+    target_engine = create_engine("sqlite:///:memory:")
+    metadata = MetaData()
+    source_entries = Table("source_entries", metadata, Column("id", Integer, primary_key=True))
+    custom_form_entries = Table(
+        "custom_form_entries",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("source_entry_id", Integer, ForeignKey("source_entries.id")),
+    )
+    metadata.create_all(target_engine)
+
+    errors = engine._direct_foreign_key_preflight_errors(
+        target_engine,
+        {"preview": [{"column": "source_entry_id", "referred_table": "source_entries", "explicit": False}]},
+        "custom_form_entries",
+        [{"id": 1, "source_entry_id": 75}],
+        planned_parent_values={"source_entries": {75}},
+    )
+
+    assert errors == []
+
+
 def test_postgresql_jsonb_path_filter_compiles_without_raw_sql():
     from sqlalchemy import Column, MetaData, Table, select
     from sqlalchemy.dialects import postgresql
@@ -219,6 +244,7 @@ def test_discover_tables_returns_source_metadata_and_target_presence(monkeypatch
                 "name": "customers",
                 "column_count": 2,
                 "filter_columns": [{"name": "id", "type": ""}, {"name": "email", "type": ""}],
+                "checkpoint_columns": [],
                 "primary_key": ["id"],
                 "dependencies": ["users"],
                 "mapping_columns": [],
@@ -239,6 +265,7 @@ def test_discover_tables_returns_source_metadata_and_target_presence(monkeypatch
                 "name": "events",
                 "column_count": 1,
                 "filter_columns": [{"name": "event_id", "type": ""}],
+                "checkpoint_columns": [],
             "primary_key": [],
             "dependencies": [],
             "mapping_columns": [],
@@ -247,6 +274,33 @@ def test_discover_tables_returns_source_metadata_and_target_presence(monkeypatch
             "mapping_errors": [],
             "target_exists": False,
         },
+    ]
+
+
+def test_discover_tables_exposes_only_engine_supported_checkpoint_columns(monkeypatch):
+    from sqlalchemy import Date, Integer, String
+
+    source_engine = object()
+    target_engine = object()
+    source_inspector = FakeInspector(
+        ["events"],
+        columns={"events": [
+            {"name": "id", "type": Integer()},
+            {"name": "occurred_on", "type": Date()},
+            {"name": "reference", "type": String()},
+        ]},
+        primary_keys={"events": ["id"]},
+    )
+    target_inspector = FakeInspector(["events"])
+
+    monkeypatch.setattr(engine, "connection_engine", lambda config: source_engine if config == "source" else target_engine)
+    monkeypatch.setattr(engine, "inspect", lambda value: source_inspector if value is source_engine else target_inspector)
+
+    result = engine.discover_tables("source", "target")
+
+    assert result[0]["checkpoint_columns"] == [
+        {"name": "id", "type": "INTEGER"},
+        {"name": "occurred_on", "type": "DATE"},
     ]
 
 

@@ -1,4 +1,4 @@
-from celery import shared_task
+from celery import chain, shared_task
 from flask import current_app
 
 from .. import db
@@ -57,3 +57,27 @@ def enqueue_job(job_id):
             "No Celery worker is available. Start the worker or use SYNC_EXECUTION_MODE=inline."
         )
     return run_sync_job.delay(job_id)
+
+
+def enqueue_jobs_in_order(job_ids):
+    """Run a dependency-ordered batch sequentially in either execution mode."""
+    job_ids = list(job_ids)
+    if not job_ids:
+        return None
+    if len(job_ids) == 1:
+        return enqueue_job(job_ids[0])
+    if current_app.config["SYNC_EXECUTION_MODE"] == "inline":
+        for job_id in job_ids:
+            enqueue_job(job_id)
+        return None
+
+    celery_app = run_sync_job.app
+    try:
+        workers = celery_app.control.inspect(timeout=1).ping()
+    except Exception as exc:
+        raise ConnectionError("Unable to contact the Celery worker: {}".format(exc)) from exc
+    if not workers:
+        raise ConnectionError(
+            "No Celery worker is available. Start the worker or use SYNC_EXECUTION_MODE=inline."
+        )
+    return chain(*(run_sync_job.si(job_id) for job_id in job_ids)).apply_async()

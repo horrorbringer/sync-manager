@@ -1,6 +1,6 @@
 from sync_manager import db
 from sync_manager.models import DatabaseConnection, SyncJob, User
-from sync_manager.sync.tasks import enqueue_job, execute_sync_job, run_sync_job
+from sync_manager.sync.tasks import enqueue_job, enqueue_jobs_in_order, execute_sync_job, run_sync_job
 
 
 def test_enqueue_runs_inline_by_default(app, monkeypatch):
@@ -20,6 +20,27 @@ def test_enqueue_uses_celery_when_configured(app, monkeypatch):
     with app.app_context():
         enqueue_job(42)
     assert queued == [42]
+
+
+def test_dependency_ordered_jobs_use_one_immutable_celery_chain(app, monkeypatch):
+    dispatched = []
+
+    class ChainResult:
+        def apply_async(self):
+            dispatched.append(True)
+            return "queued-chain"
+
+    inspector = type("Inspector", (), {"ping": lambda self: {"worker": {"ok": "pong"}}})()
+    monkeypatch.setattr(run_sync_job.app.control, "inspect", lambda timeout: inspector)
+    monkeypatch.setattr(run_sync_job, "si", lambda job_id: "job-{}".format(job_id))
+    monkeypatch.setattr("sync_manager.sync.tasks.chain", lambda *signatures: dispatched.append(signatures) or ChainResult())
+    app.config["SYNC_EXECUTION_MODE"] = "celery"
+
+    with app.app_context():
+        result = enqueue_jobs_in_order([4, 8, 15])
+
+    assert result == "queued-chain"
+    assert dispatched == [("job-4", "job-8", "job-15"), True]
 
 
 def test_celery_is_configured_for_eager_tests(app):

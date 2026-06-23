@@ -240,7 +240,7 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "connections_routes_test",
-      "community": 1,
+      "community": 5,
       "norm_label": "test()"
     },
     {
@@ -320,7 +320,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "sync_manager_models",
-      "community": 3,
+      "community": 5,
       "norm_label": "models.py"
     },
     {
@@ -330,7 +330,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "sync_manager_models_utcnow",
-      "community": 1,
+      "community": 5,
       "norm_label": "utcnow()"
     },
     {
@@ -390,7 +390,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "sync_manager_models_load_user",
-      "community": 3,
+      "community": 5,
       "norm_label": "load_user()"
     },
     {
@@ -480,7 +480,7 @@
       "source_location": "L135",
       "_origin": "ast",
       "id": "sync_manager_models_syncjob_duration_seconds",
-      "community": 0,
+      "community": 5,
       "norm_label": ".duration_seconds()"
     },
     {
@@ -490,7 +490,7 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "sync_manager_models_auditlog",
-      "community": 0,
+      "community": 5,
       "norm_label": "auditlog"
     },
     {
@@ -914,10 +914,20 @@
       "norm_label": "_foreign_key_mapping_plan()"
     },
     {
-      "label": "_build_row_cache()",
+      "label": "_direct_foreign_key_preflight_errors()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L417",
+      "_origin": "ast",
+      "id": "sync_engine_direct_foreign_key_preflight_errors",
+      "community": 1,
+      "norm_label": "_direct_foreign_key_preflight_errors()"
+    },
+    {
+      "label": "_build_row_cache()",
+      "file_type": "code",
+      "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L452",
       "_origin": "ast",
       "id": "sync_engine_build_row_cache",
       "community": 1,
@@ -927,7 +937,7 @@
       "label": "_row_key()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L427",
+      "source_location": "L462",
       "_origin": "ast",
       "id": "sync_engine_row_key",
       "community": 1,
@@ -937,7 +947,7 @@
       "label": "_candidate_scalar_values()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L431",
+      "source_location": "L466",
       "_origin": "ast",
       "id": "sync_engine_candidate_scalar_values",
       "community": 1,
@@ -947,7 +957,7 @@
       "label": "_fetch_source_row_by_pk()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L461",
+      "source_location": "L496",
       "_origin": "ast",
       "id": "sync_engine_fetch_source_row_by_pk",
       "community": 1,
@@ -957,7 +967,7 @@
       "label": "_fetch_row_by_pk()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L489",
+      "source_location": "L524",
       "_origin": "ast",
       "id": "sync_engine_fetch_row_by_pk",
       "community": 1,
@@ -967,7 +977,7 @@
       "label": "_row_identifier()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L517",
+      "source_location": "L552",
       "_origin": "ast",
       "id": "sync_engine_row_identifier",
       "community": 1,
@@ -977,7 +987,7 @@
       "label": "_append_drop_detail()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L523",
+      "source_location": "L558",
       "_origin": "ast",
       "id": "sync_engine_append_drop_detail",
       "community": 1,
@@ -987,7 +997,7 @@
       "label": "_collect_mysql_warnings()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L536",
+      "source_location": "L571",
       "_origin": "ast",
       "id": "sync_engine_collect_mysql_warnings",
       "community": 1,
@@ -997,7 +1007,7 @@
       "label": "_remap_foreign_key_values()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L553",
+      "source_location": "L588",
       "_origin": "ast",
       "id": "sync_engine_remap_foreign_key_values",
       "community": 1,
@@ -1007,7 +1017,7 @@
       "label": "_dependency_analysis()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L684",
+      "source_location": "L719",
       "_origin": "ast",
       "id": "sync_engine_dependency_analysis",
       "community": 1,
@@ -1017,7 +1027,7 @@
       "label": "validate_table()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L727",
+      "source_location": "L762",
       "_origin": "ast",
       "id": "sync_engine_validate_table",
       "community": 1,
@@ -1027,7 +1037,7 @@
       "label": "order_tables_by_dependency()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L794",
+      "source_location": "L829",
       "_origin": "ast",
       "id": "sync_engine_order_tables_by_dependency",
       "community": 1,
@@ -1037,7 +1047,7 @@
       "label": "dependency_cycle_tables()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L799",
+      "source_location": "L834",
       "_origin": "ast",
       "id": "sync_engine_dependency_cycle_tables",
       "community": 1,
@@ -1047,7 +1057,7 @@
       "label": "dependency_report()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L804",
+      "source_location": "L839",
       "_origin": "ast",
       "id": "sync_engine_dependency_report",
       "community": 4,
@@ -1057,7 +1067,7 @@
       "label": "expand_tables_with_dependencies()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L813",
+      "source_location": "L848",
       "_origin": "ast",
       "id": "sync_engine_expand_tables_with_dependencies",
       "community": 4,
@@ -1067,7 +1077,7 @@
       "label": "dry_run()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L848",
+      "source_location": "L883",
       "_origin": "ast",
       "id": "sync_engine_dry_run",
       "community": 1,
@@ -1077,7 +1087,7 @@
       "label": "job_lock()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L896",
+      "source_location": "L941",
       "_origin": "ast",
       "id": "sync_engine_job_lock",
       "community": 1,
@@ -1087,7 +1097,7 @@
       "label": "synchronize()",
       "file_type": "code",
       "source_file": "sync_manager/sync/engine.py",
-      "source_location": "L910",
+      "source_location": "L955",
       "_origin": "ast",
       "id": "sync_engine_synchronize",
       "community": 1,
@@ -1112,6 +1122,16 @@
       "id": "sync_engine_rationale_116",
       "community": 1,
       "norm_label": "resume a limited full sync by primary key without changing normal full-sync sema"
+    },
+    {
+      "label": "Report missing direct-copy parent rows before a target write can hit an FK viola",
+      "file_type": "rationale",
+      "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L418",
+      "_origin": "ast",
+      "id": "sync_engine_rationale_418",
+      "community": 1,
+      "norm_label": "report missing direct-copy parent rows before a target write can hit an fk viola"
     },
     {
       "label": "routes.py",
@@ -1670,7 +1690,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "tests_test_notifications_test_viewer_cannot_access_notification_settings",
-      "community": 2,
+      "community": 3,
       "norm_label": "test_viewer_cannot_access_notification_settings()"
     },
     {
@@ -2134,10 +2154,20 @@
       "norm_label": "test_filter_rejects_unknown_columns()"
     },
     {
-      "label": "test_postgresql_jsonb_path_filter_compiles_without_raw_sql()",
+      "label": "test_direct_foreign_key_preflight_reports_missing_target_parent()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L106",
+      "_origin": "ast",
+      "id": "tests_test_sync_engine_test_direct_foreign_key_preflight_reports_missing_target_parent",
+      "community": 6,
+      "norm_label": "test_direct_foreign_key_preflight_reports_missing_target_parent()"
+    },
+    {
+      "label": "test_postgresql_jsonb_path_filter_compiles_without_raw_sql()",
+      "file_type": "code",
+      "source_file": "tests/test_sync_engine.py",
+      "source_location": "L133",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_postgresql_jsonb_path_filter_compiles_without_raw_sql",
       "community": 6,
@@ -2147,7 +2177,7 @@
       "label": "test_postgresql_upsert_uses_excluded_values()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L122",
+      "source_location": "L149",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_postgresql_upsert_uses_excluded_values",
       "community": 6,
@@ -2157,7 +2187,7 @@
       "label": "FakeInspector",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L147",
+      "source_location": "L174",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector",
       "community": 6,
@@ -2167,7 +2197,7 @@
       "label": ".__init__()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L148",
+      "source_location": "L175",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_init",
       "community": 6,
@@ -2177,7 +2207,7 @@
       "label": ".get_table_names()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L155",
+      "source_location": "L182",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_get_table_names",
       "community": 6,
@@ -2187,7 +2217,7 @@
       "label": ".get_columns()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L158",
+      "source_location": "L185",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_get_columns",
       "community": 6,
@@ -2197,7 +2227,7 @@
       "label": ".get_pk_constraint()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L161",
+      "source_location": "L188",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_get_pk_constraint",
       "community": 6,
@@ -2207,7 +2237,7 @@
       "label": ".get_foreign_keys()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L164",
+      "source_location": "L191",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_get_foreign_keys",
       "community": 6,
@@ -2217,7 +2247,7 @@
       "label": ".get_unique_constraints()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L167",
+      "source_location": "L194",
       "_origin": "ast",
       "id": "tests_test_sync_engine_fakeinspector_get_unique_constraints",
       "community": 6,
@@ -2227,7 +2257,7 @@
       "label": "test_discover_tables_returns_source_metadata_and_target_presence()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L171",
+      "source_location": "L198",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_discover_tables_returns_source_metadata_and_target_presence",
       "community": 6,
@@ -2237,7 +2267,7 @@
       "label": "test_order_tables_by_dependency()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L226",
+      "source_location": "L253",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_order_tables_by_dependency",
       "community": 6,
@@ -2247,7 +2277,7 @@
       "label": "test_order_tables_by_dependency_handles_cycles()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L246",
+      "source_location": "L273",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_order_tables_by_dependency_handles_cycles",
       "community": 6,
@@ -2257,7 +2287,7 @@
       "label": "test_dependency_report_returns_safe_order_and_blocked_tables()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L266",
+      "source_location": "L293",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_dependency_report_returns_safe_order_and_blocked_tables",
       "community": 6,
@@ -2267,7 +2297,7 @@
       "label": "test_expand_tables_with_dependencies_adds_parents_first()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L286",
+      "source_location": "L313",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_expand_tables_with_dependencies_adds_parents_first",
       "community": 6,
@@ -2277,7 +2307,7 @@
       "label": "test_validate_table_blocks_missing_dependencies()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L306",
+      "source_location": "L333",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_validate_table_blocks_missing_dependencies",
       "community": 6,
@@ -2287,7 +2317,7 @@
       "label": "test_validate_table_blocks_unmappable_foreign_keys()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L324",
+      "source_location": "L351",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_validate_table_blocks_unmappable_foreign_keys",
       "community": 6,
@@ -2297,7 +2327,7 @@
       "label": "test_remap_foreign_key_values_uses_stable_lookup_columns()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L350",
+      "source_location": "L377",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_uses_stable_lookup_columns",
       "community": 6,
@@ -2307,7 +2337,7 @@
       "label": "test_remap_foreign_key_values_honors_custom_mapping_rules()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L387",
+      "source_location": "L414",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_honors_custom_mapping_rules",
       "community": 6,
@@ -2317,7 +2347,7 @@
       "label": "test_remap_foreign_key_values_can_skip_orphan_rows()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L440",
+      "source_location": "L467",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_can_skip_orphan_rows",
       "community": 6,
@@ -2327,7 +2357,7 @@
       "label": "test_remap_foreign_key_values_normalizes_scalar_key_values()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L480",
+      "source_location": "L507",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_normalizes_scalar_key_values",
       "community": 6,
@@ -2337,7 +2367,7 @@
       "label": "test_remap_foreign_key_values_prefers_direct_primary_key_matches()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L520",
+      "source_location": "L547",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_prefers_direct_primary_key_matches",
       "community": 6,
@@ -2347,7 +2377,7 @@
       "label": "test_remap_foreign_key_values_cycle_mode_keeps_source_value_when_target_missing()",
       "file_type": "code",
       "source_file": "tests/test_sync_engine.py",
-      "source_location": "L555",
+      "source_location": "L582",
       "_origin": "ast",
       "id": "tests_test_sync_engine_test_remap_foreign_key_values_cycle_mode_keeps_source_value_when_target_missing",
       "community": 6,
@@ -4412,9 +4442,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L181",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_save_limited_full_checkpoint",
-      "target": "sync_manager_models_utcnow",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_utcnow"
     },
     {
       "relation": "calls",
@@ -4572,9 +4602,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine",
-      "target": "sync_manager_models_user",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_user"
     },
     {
       "relation": "uses",
@@ -4582,9 +4612,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_sync_engine_fakeinspector",
-      "target": "sync_manager_models_user",
-      "confidence_score": 0.5
+      "target": "sync_manager_models_user"
     },
     {
       "relation": "imports",
@@ -4758,9 +4788,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine",
-      "target": "sync_manager_models_databaseconnection",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_databaseconnection"
     },
     {
       "relation": "uses",
@@ -4768,9 +4798,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_sync_engine_fakeinspector",
-      "target": "sync_manager_models_databaseconnection",
-      "confidence_score": 0.5
+      "target": "sync_manager_models_databaseconnection"
     },
     {
       "relation": "calls",
@@ -4779,9 +4809,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L78",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine_test_limited_full_sync_preview_continues_after_saved_primary_key",
-      "target": "sync_manager_models_databaseconnection",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_databaseconnection"
     },
     {
       "relation": "calls",
@@ -5245,9 +5275,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine",
-      "target": "sync_manager_models_syncjob",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_syncjob"
     },
     {
       "relation": "uses",
@@ -5255,9 +5285,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L66",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_sync_engine_fakeinspector",
-      "target": "sync_manager_models_syncjob",
-      "confidence_score": 0.5
+      "target": "sync_manager_models_syncjob"
     },
     {
       "relation": "calls",
@@ -5266,9 +5296,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L81",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine_test_limited_full_sync_preview_continues_after_saved_primary_key",
-      "target": "sync_manager_models_syncjob",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_syncjob"
     },
     {
       "relation": "calls",
@@ -5420,9 +5450,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L168",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_save_limited_full_checkpoint",
-      "target": "sync_manager_models_synccheckpoint",
-      "confidence_score": 1.0
+      "target": "sync_manager_models_synccheckpoint"
     },
     {
       "relation": "method",
@@ -6326,6 +6356,16 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L417",
+      "weight": 1.0,
+      "source": "sync_engine",
+      "target": "sync_engine_direct_foreign_key_preflight_errors",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "sync_manager/sync/engine.py",
       "source_location": "L232",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -6428,9 +6468,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L115",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine",
-      "target": "sync_engine_limited_full_clause",
-      "confidence_score": 1.0
+      "target": "sync_engine_limited_full_clause"
     },
     {
       "relation": "contains",
@@ -6538,9 +6578,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L156",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine",
-      "target": "sync_engine_save_limited_full_checkpoint",
-      "confidence_score": 1.0
+      "target": "sync_engine_save_limited_full_checkpoint"
     },
     {
       "relation": "contains",
@@ -6643,9 +6683,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L32",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_rationale_32",
-      "target": "sync_engine_source_filter_clause",
-      "confidence_score": 1.0
+      "target": "sync_engine_source_filter_clause"
     },
     {
       "relation": "calls",
@@ -6687,9 +6727,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L128",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_limited_full_clause",
-      "target": "sync_engine_filter_signature",
-      "confidence_score": 1.0
+      "target": "sync_engine_filter_signature"
     },
     {
       "relation": "calls",
@@ -6709,9 +6749,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L159",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_save_limited_full_checkpoint",
-      "target": "sync_engine_filter_signature",
-      "confidence_score": 1.0
+      "target": "sync_engine_filter_signature"
     },
     {
       "relation": "calls",
@@ -6731,9 +6771,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L134",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_limited_full_clause",
-      "target": "sync_engine_cursor_value",
-      "confidence_score": 1.0
+      "target": "sync_engine_cursor_value"
     },
     {
       "relation": "calls",
@@ -6764,9 +6804,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L858",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_dry_run",
-      "target": "sync_engine_limited_full_clause",
-      "confidence_score": 1.0
+      "target": "sync_engine_limited_full_clause"
     },
     {
       "relation": "rationale_for",
@@ -6774,9 +6814,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L116",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_rationale_116",
-      "target": "sync_engine_limited_full_clause",
-      "confidence_score": 1.0
+      "target": "sync_engine_limited_full_clause"
     },
     {
       "relation": "calls",
@@ -6785,9 +6825,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L938",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_synchronize",
-      "target": "sync_engine_limited_full_clause",
-      "confidence_score": 1.0
+      "target": "sync_engine_limited_full_clause"
     },
     {
       "relation": "calls",
@@ -6807,9 +6847,9 @@
       "source_file": "sync_manager/sync/engine.py",
       "source_location": "L1080",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "sync_engine_synchronize",
-      "target": "sync_engine_save_limited_full_checkpoint",
-      "confidence_score": 1.0
+      "target": "sync_engine_save_limited_full_checkpoint"
     },
     {
       "relation": "imports",
@@ -6854,6 +6894,17 @@
       "confidence_score": 1.0,
       "source": "sync_engine_discover_tables",
       "target": "sync_engine_load_mapping_rules"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L923",
+      "weight": 1.0,
+      "source": "sync_engine_dry_run",
+      "target": "sync_engine_load_mapping_rules",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -7058,6 +7109,17 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L919",
+      "weight": 1.0,
+      "source": "sync_engine_dry_run",
+      "target": "sync_engine_foreign_key_mapping_plan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "sync_manager/sync/engine.py",
       "source_location": "L508",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -7085,6 +7147,27 @@
       "confidence_score": 1.0,
       "source": "sync_engine_validate_table",
       "target": "sync_engine_foreign_key_mapping_plan"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L925",
+      "weight": 1.0,
+      "source": "sync_engine_dry_run",
+      "target": "sync_engine_direct_foreign_key_preflight_errors",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "sync_manager/sync/engine.py",
+      "source_location": "L418",
+      "weight": 1.0,
+      "source": "sync_engine_rationale_418",
+      "target": "sync_engine_direct_foreign_key_preflight_errors",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -8672,6 +8755,16 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "tests/test_sync_engine.py",
+      "source_location": "L106",
+      "weight": 1.0,
+      "source": "tests_test_sync_engine",
+      "target": "tests_test_sync_engine_test_direct_foreign_key_preflight_reports_missing_target_parent",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/test_sync_engine.py",
       "source_location": "L96",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -8724,9 +8817,9 @@
       "source_file": "tests/test_sync_engine.py",
       "source_location": "L63",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_sync_engine",
-      "target": "tests_test_sync_engine_test_limited_full_sync_preview_continues_after_saved_primary_key",
-      "confidence_score": 1.0
+      "target": "tests_test_sync_engine_test_limited_full_sync_preview_continues_after_saved_primary_key"
     },
     {
       "relation": "contains",
