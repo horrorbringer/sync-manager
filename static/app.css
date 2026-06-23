@@ -219,6 +219,9 @@ body { margin:0; color:var(--text); background:var(--canvas); font-family:Arial,
 .sync-scope-settings { display:grid; gap:8px; margin-top:10px; padding:12px; border:1px solid #b6d8fb; border-radius:6px; background:#f7faff; }
 .sync-scope-help { margin:0; color:#44546f; font-size:.78rem; }
 .sync-scope-warning { margin-top:8px; padding:8px 10px; border:1px solid #f5cd47; border-radius:4px; color:#7f5f01; background:#fff7d6; font-size:.78rem; font-weight:600; }
+.sync-checkpoint-panel { display:grid; gap:6px; margin-top:10px; padding:10px 12px; border:1px solid #b6d8fb; border-radius:6px; background:#f7faff; color:#44546f; font-size:.78rem; }
+.sync-checkpoint-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.sync-checkpoint-row code { color:#0c66e4; font-size:.76rem; }
 .sync-row-limit { max-width:420px; margin-top:12px; }
 .sync-incremental-row { display:grid; grid-template-columns:minmax(120px,1fr) minmax(200px,1.5fr); align-items:center; gap:10px; color:#172b4d; font-size:.82rem; }
 .sync-advanced-panel { margin-top:12px; border:1px solid #dfe1e6; border-radius:6px; background:#fafbfc; }

@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, Response, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 import csv
 import io
@@ -150,6 +150,19 @@ def _expand_selected_tables(source, selected_tables):
     return expanded, auto_added
 
 
+def _dependency_parent_tables(dependency_state):
+    return {
+        dependency
+        for dependencies in (dependency_state or {}).get("dependencies", {}).values()
+        for dependency in dependencies
+    }
+
+
+def _row_limit_for_table(table_name, selected_row_limit, parent_tables):
+    """Keep parent rows complete so a limited child batch cannot break direct FKs."""
+    return None if table_name in parent_tables else selected_row_limit
+
+
 def _find_active_job(source_id, target_id, table_name):
     return db.session.scalar(
         db.select(SyncJob).where(
@@ -232,6 +245,27 @@ def _render_sync_form(
         profiles=db.session.scalars(db.select(SyncProfile).where(SyncProfile.created_by_id == current_user.id).order_by(SyncProfile.name)).all(),
         active_profile=active_profile if active_profile and active_profile.created_by_id == current_user.id else None,
     )
+
+
+@bp.route("/checkpoint-status", methods=("POST",))
+@login_required
+@roles_required("administrator", "operator")
+def checkpoint_status():
+    payload = request.get_json(silent=True) or {}
+    try:
+        source_id = int(payload.get("source_id"))
+        target_id = int(payload.get("target_id"))
+    except (TypeError, ValueError):
+        return jsonify(error="Choose valid source and target connections."), 400
+    table_filters = payload.get("table_filters") or {}
+    incremental_columns = payload.get("incremental_columns") or {}
+    if not isinstance(table_filters, dict) or not isinstance(incremental_columns, dict):
+        return jsonify(error="Invalid checkpoint configuration."), 400
+    source = db.session.get(DatabaseConnection, source_id)
+    target = db.session.get(DatabaseConnection, target_id)
+    if source is None or target is None or source.id == target.id:
+        return jsonify(error="Choose different source and target connections."), 400
+    return jsonify(statuses=incremental_checkpoint_status(source.id, target.id, table_filters, incremental_columns))
 
 
 @bp.route("/new", methods=("GET", "POST"))
@@ -369,6 +403,7 @@ def create():
                 selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
                 dependency_state = dependency_report(source, selected_tables)
                 cycle_tables = dependency_state["cycle_tables"]
+                parent_tables = _dependency_parent_tables(dependency_state)
                 skipped_empty_tables = []
                 skipped_noop_tables = []
                 planned_parent_values = {}
@@ -380,7 +415,7 @@ def create():
                             table_name,
                             selected_table_filters.get(table_name),
                             selected_incremental_columns.get(table_name),
-                            selected_row_limit,
+                            _row_limit_for_table(table_name, selected_row_limit, parent_tables),
                             planned_parent_values,
                         )
                     except Exception as exc:
@@ -440,7 +475,7 @@ def create():
                         sync_mode=selected_sync_mode,
                         filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                         incremental_column=selected_incremental_columns.get(table_name),
-                        row_limit=selected_row_limit,
+                        row_limit=_row_limit_for_table(table_name, selected_row_limit, parent_tables),
                         cycle_sync=False,
                         initiated_by=current_user,
                     )
@@ -460,7 +495,7 @@ def create():
                         sync_mode=selected_sync_mode,
                         filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                         incremental_column=selected_incremental_columns.get(table_name),
-                        row_limit=selected_row_limit,
+                        row_limit=_row_limit_for_table(table_name, selected_row_limit, parent_tables),
                         cycle_sync=True,
                         initiated_by=current_user,
                     )
@@ -533,6 +568,7 @@ def create():
                 selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
                 dependency_state = dependency_report(source, selected_tables)
                 cycle_tables = dependency_state["cycle_tables"]
+                parent_tables = _dependency_parent_tables(dependency_state)
                 skipped_empty_tables = []
                 skipped_noop_tables = []
                 planned_parent_values = {}
@@ -544,7 +580,7 @@ def create():
                             table_name,
                             selected_table_filters.get(table_name),
                             selected_incremental_columns.get(table_name),
-                            selected_row_limit,
+                            _row_limit_for_table(table_name, selected_row_limit, parent_tables),
                             planned_parent_values,
                         )
                     except Exception as exc:
@@ -630,6 +666,7 @@ def create():
             selected_tables, auto_added_tables = _expand_selected_tables(source, selected_tables) if not (selected_table_filters or selected_incremental_columns) else (selected_tables, [])
             dependency_state = dependency_report(source, selected_tables)
             cycle_tables = dependency_state["cycle_tables"]
+            parent_tables = _dependency_parent_tables(dependency_state)
             skipped_empty_tables = []
             skipped_noop_tables = []
             planned_parent_values = {}
@@ -641,7 +678,7 @@ def create():
                         table_name,
                         selected_table_filters.get(table_name),
                         selected_incremental_columns.get(table_name),
-                        selected_row_limit,
+                        _row_limit_for_table(table_name, selected_row_limit, parent_tables),
                         planned_parent_values,
                     )
                 except Exception as exc:
@@ -701,7 +738,7 @@ def create():
                     sync_mode=selected_sync_mode,
                     filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                     incremental_column=selected_incremental_columns.get(table_name),
-                    row_limit=selected_row_limit,
+                    row_limit=_row_limit_for_table(table_name, selected_row_limit, parent_tables),
                     cycle_sync=False,
                     initiated_by=current_user,
                 )
@@ -721,7 +758,7 @@ def create():
                     sync_mode=selected_sync_mode,
                     filter_rules=json.dumps(selected_table_filters.get(table_name)) if selected_table_filters.get(table_name) else None,
                     incremental_column=selected_incremental_columns.get(table_name),
-                    row_limit=selected_row_limit,
+                    row_limit=_row_limit_for_table(table_name, selected_row_limit, parent_tables),
                     cycle_sync=True,
                     initiated_by=current_user,
                 )

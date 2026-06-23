@@ -1,16 +1,16 @@
 # Graph Report - sync-data  (2026-06-23)
 
 ## Corpus Check
-- 36 files · ~25,343 words
+- 36 files · ~25,818 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 304 nodes · 649 edges · 17 communities (16 shown, 1 thin omitted)
+- 308 nodes · 658 edges · 17 communities (16 shown, 1 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 5 edges (avg confidence: 0.5)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6a5d1f6a`
+- Built from commit: `d034b69b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -28,21 +28,19 @@
 - [[_COMMUNITY_Community 16|Community 16]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `DatabaseConnection` - 40 edges
+1. `DatabaseConnection` - 41 edges
 2. `SyncJob` - 33 edges
 3. `record_audit()` - 27 edges
 4. `User` - 26 edges
 5. `create()` - 26 edges
 6. `synchronize()` - 19 edges
-7. `Core Features` - 18 edges
-8. `FakeInspector` - 17 edges
+7. `FakeInspector` - 18 edges
+8. `Core Features` - 18 edges
 9. `encrypt_secret()` - 13 edges
 10. `decrypt_secret()` - 13 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `FakeResponse` --uses--> `User`  [INFERRED]
-  tests/test_notifications.py → sync_manager/models.py
-- `test_viewer_cannot_access_notification_settings()` --calls--> `User`  [EXTRACTED]
   tests/test_notifications.py → sync_manager/models.py
 - `FakeInspector` --uses--> `User`  [INFERRED]
   tests/test_sync_engine.py → sync_manager/models.py
@@ -50,53 +48,55 @@
   tests/test_security.py → sync_manager/models.py
 - `FakeInspector` --uses--> `DatabaseConnection`  [INFERRED]
   tests/test_sync_engine.py → sync_manager/models.py
+- `FakeInspector` --uses--> `SyncJob`  [INFERRED]
+  tests/test_sync_engine.py → sync_manager/models.py
 
 ## Import Cycles
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/sync/engine.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
-- 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/main/routes.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/service.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 3-file cycle: `sync_manager/__init__.py -> sync_manager/cli.py -> sync_manager/models.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/sync/engine.py -> sync_manager/__init__.py`
+- 3-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/audit.py -> sync_manager/__init__.py`
+- 4-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/notifications/service.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/connections/routes.py -> sync_manager/sync/engine.py -> sync_manager/models.py -> sync_manager/__init__.py`
-- 4-file cycle: `sync_manager/__init__.py -> sync_manager/auth/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/audit.py -> sync_manager/models.py -> sync_manager/__init__.py`
 - 4-file cycle: `sync_manager/__init__.py -> sync_manager/notifications/routes.py -> sync_manager/notifications/service.py -> sync_manager/models.py -> sync_manager/__init__.py`
 
 ## Communities (17 total, 1 thin omitted)
 
 ### Community 0 - "Models and Audit Logs"
-Cohesion: 0.09
-Nodes (34): DatabaseConnection, SyncJob, Make exact, successfully previewed parent rows available to later FK checks., _remember_planned_parent_values(), test_dashboard_jobs_paginate(), test_dashboard_shows_short_upsert_label(), test_referenced_connection_cannot_be_deleted(), _failed_job() (+26 more)
+Cohesion: 0.07
+Nodes (36): DatabaseConnection, SyncJob, Make exact, successfully previewed parent rows available to later FK checks., _remember_planned_parent_values(), test_audit_logs_paginate(), test_dashboard_jobs_paginate(), test_dashboard_shows_short_upsert_label(), test_limited_full_sync_preview_continues_after_saved_primary_key() (+28 more)
 
 ### Community 1 - "Sync Engine"
-Cohesion: 0.11
-Nodes (39): test(), _advance_postgresql_sequence(), _append_drop_detail(), _candidate_scalar_values(), _collect_mysql_warnings(), connection_engine(), _cursor_value(), _dependency_analysis() (+31 more)
+Cohesion: 0.12
+Nodes (40): test(), _advance_postgresql_sequence(), _append_drop_detail(), _candidate_scalar_values(), _collect_mysql_warnings(), connection_engine(), _cursor_value(), _dependency_analysis() (+32 more)
 
 ### Community 2 - "Application and Workers"
-Cohesion: 0.08
-Nodes (15): audit_logs(), dashboard(), _paginate(), init_notification_executor(), init_celery(), register_commands(), create_app(), AuditLog (+7 more)
+Cohesion: 0.13
+Nodes (9): register_commands(), create_app(), User, app(), test_viewer_cannot_access_notification_settings(), test_viewer_cannot_create_connection(), test_disabled_user_cannot_login(), test_viewer_cannot_access_user_management() (+1 more)
 
 ### Community 3 - "Notifications and Security"
-Cohesion: 0.14
-Nodes (21): settings(), test_message(), get_settings(), _send_in_app(), send_telegram_message(), NotificationSettings, decrypt_secret(), encrypt_secret() (+13 more)
+Cohesion: 0.12
+Nodes (22): settings(), test_message(), get_settings(), init_notification_executor(), _send_in_app(), send_telegram_message(), init_celery(), NotificationSettings (+14 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.12
-Nodes (24): dependency_report(), expand_tables_with_dependencies(), incremental_checkpoint_status(), SyncProfile, _all_table_names(), create(), _dry_run_with_filters(), duplicate_profile() (+16 more)
+Nodes (25): dependency_report(), expand_tables_with_dependencies(), incremental_checkpoint_status(), SyncProfile, _all_table_names(), checkpoint_status(), create(), _dry_run_with_filters() (+17 more)
 
 ### Community 5 - "Authentication and Connections"
-Cohesion: 0.17
-Nodes (17): login(), logout(), _connection_fields(), _connection_form_values(), create(), delete(), edit(), index() (+9 more)
+Cohesion: 0.13
+Nodes (22): login(), logout(), _connection_fields(), _connection_form_values(), create(), delete(), edit(), index() (+14 more)
 
 ### Community 6 - "Sync Engine Tests"
-Cohesion: 0.08
-Nodes (9): FakeInspector, test_dependency_report_returns_safe_order_and_blocked_tables(), test_discover_tables_returns_source_metadata_and_target_presence(), test_expand_tables_with_dependencies_adds_parents_first(), test_limited_full_sync_preview_continues_after_saved_primary_key(), test_order_tables_by_dependency(), test_order_tables_by_dependency_handles_cycles(), test_validate_table_blocks_missing_dependencies() (+1 more)
+Cohesion: 0.09
+Nodes (9): FakeInspector, test_dependency_report_returns_safe_order_and_blocked_tables(), test_discover_tables_exposes_only_engine_supported_checkpoint_columns(), test_discover_tables_returns_source_metadata_and_target_presence(), test_expand_tables_with_dependencies_adds_parents_first(), test_order_tables_by_dependency(), test_order_tables_by_dependency_handles_cycles(), test_validate_table_blocks_missing_dependencies() (+1 more)
 
 ### Community 7 - "Job Task Execution"
 Cohesion: 0.23
@@ -118,17 +118,17 @@ Nodes (6): Background execution, Core behavior, Database Sync Manager, Local set
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `SyncJob` connect `Models and Audit Logs` to `Sync Engine`, `Application and Workers`, `Notifications and Security`, `Community 4`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
-  _High betweenness centrality (0.123) - this node is a cross-community bridge._
-- **Why does `DatabaseConnection` connect `Models and Audit Logs` to `Application and Workers`, `Notifications and Security`, `Community 4`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
-  _High betweenness centrality (0.112) - this node is a cross-community bridge._
+- **Why does `SyncJob` connect `Models and Audit Logs` to `Sync Engine`, `Notifications and Security`, `Community 4`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
+  _High betweenness centrality (0.122) - this node is a cross-community bridge._
+- **Why does `DatabaseConnection` connect `Models and Audit Logs` to `Notifications and Security`, `Community 4`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
+  _High betweenness centrality (0.115) - this node is a cross-community bridge._
 - **Why does `User` connect `Application and Workers` to `Models and Audit Logs`, `Notifications and Security`, `Authentication and Connections`, `Sync Engine Tests`, `Job Task Execution`?**
-  _High betweenness centrality (0.099) - this node is a cross-community bridge._
+  _High betweenness centrality (0.098) - this node is a cross-community bridge._
 - **Are the 2 inferred relationships involving `User` (e.g. with `FakeResponse` and `FakeInspector`) actually correct?**
   _`User` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `Build safe SQLAlchemy predicates from persisted filter rules; never accept SQL t`, `Resume a limited full sync by primary key without changing normal full-sync sema`, `Report missing direct-copy parent rows before a target write can hit an FK viola` to the rest of the system?**
   _40 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Models and Audit Logs` be split into smaller, more focused modules?**
-  _Cohesion score 0.09268292682926829 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06862745098039216 - nodes in this community are weakly interconnected._
 - **Should `Sync Engine` be split into smaller, more focused modules?**
-  _Cohesion score 0.11382113821138211 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.11614401858304298 - nodes in this community are weakly interconnected._

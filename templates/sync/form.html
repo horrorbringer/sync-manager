@@ -165,10 +165,8 @@
         </div>
         <div class="sync-scope-settings d-none" id="incremental-settings"></div>
         <div class="sync-scope-warning d-none" id="incremental-requirement">Choose a checkpoint column for every selected table before validation.</div>
-        <div class="sync-row-limit"><label class="form-label" for="row-limit">Maximum rows per selected table <span class="text-muted fw-normal">optional</span></label><input class="form-control" id="row-limit" name="row_limit" type="number" min="1" max="1000000" step="1" value="{{ request.form.get('row_limit', '') }}" placeholder="No limit"><div class="form-text">Use this for a controlled batch. With a limit, the next successful run continues after the last processed primary key; remove the limit to restart a full sync. Incremental sync continues after its checkpoint.</div></div>
-        {% if checkpoint_statuses %}
-        <details class="sync-advanced-panel mt-2"><summary>View incremental checkpoints</summary><div class="small mt-2">{% for table_name, checkpoint in checkpoint_statuses.items() %}<div class="mt-1"><code>{{ table_name }}.{{ checkpoint.column }}</code>: {% if checkpoint.cursor_value is not none %}last successful value <code>{{ checkpoint.cursor_value }}</code>, primary key <code>{{ checkpoint.cursor_primary_key }}</code>{% else %}<span class="text-muted">no successful checkpoint yet; the next run starts from the beginning</span>{% endif %}</div>{% endfor %}</div></details>
-        {% endif %}
+        <div class="sync-checkpoint-panel d-none" id="checkpoint-status-panel" data-statuses='{{ checkpoint_statuses|tojson }}'></div>
+        <div class="sync-row-limit"><label class="form-label" for="row-limit">Maximum rows per child table <span class="text-muted fw-normal">optional</span></label><input class="form-control" id="row-limit" name="row_limit" type="number" min="1" max="1000000" step="1" value="{{ request.form.get('row_limit', '') }}" placeholder="No limit"><div class="form-text">Use this for a controlled batch. Selected parent tables run without this cap so every required foreign-key row is available; the limit applies to child/leaf tables. With a limit, the next successful run continues after the last processed primary key; remove the limit to restart a full sync. Incremental sync continues after its checkpoint.</div></div>
       </div>
       <div class="sync-mode-picker">
         <label class="form-label">Write behavior</label>
@@ -284,17 +282,47 @@
   const tableFilterEditors = document.getElementById('table-filter-editors');
   const rowLimitInput = document.getElementById('row-limit');
   const incrementalSettings = document.getElementById('incremental-settings');
+  const checkpointStatusPanel = document.getElementById('checkpoint-status-panel');
   const syncScopeInputs = Array.from(document.querySelectorAll('input[name="sync_scope"]'));
   const syncForm = document.getElementById('sync-form');
   let validationReady = syncForm && syncForm.dataset.validationReady === 'true';
   let tableFilters = tableFilterInput ? JSON.parse(tableFilterInput.value || '{}') : {};
   let incrementalColumns = incrementalInput ? JSON.parse(incrementalInput.value || '{}') : {};
+  let checkpointStatuses = checkpointStatusPanel ? JSON.parse(checkpointStatusPanel.dataset.statuses || '{}') : {};
+  let checkpointRefreshTimer;
   const operators = [['equals', 'equals'], ['not_equals', 'does not equal'], ['contains', 'contains'], ['starts_with', 'starts with'], ['in', 'in list'], ['between', 'between'], ['is_empty', 'is empty'], ['is_not_empty', 'is not empty'], ['json_path_equals', 'JSON path equals'], ['json_path_contains', 'JSON path contains'], ['json_path_exists', 'JSON path exists']];
 
   function saveTableFilters() { if (tableFilterInput) tableFilterInput.value = JSON.stringify(tableFilters); if (incrementalInput) incrementalInput.value = JSON.stringify(incrementalColumns); }
   function syncScope() { const selected = syncScopeInputs.find(function (input) { return input.checked; }); return selected ? selected.value : 'full'; }
   function invalidateValidation() { validationReady = false; }
   function selectedTableOptions() { return tableCheckboxes.filter(function (checkbox) { return checkbox.checked; }); }
+  function renderCheckpointStatuses(selected) {
+    if (!checkpointStatusPanel) return;
+    const tables = selected.map(function (item) { return item.value || item; }).filter(function (name) { return incrementalColumns[name]; });
+    checkpointStatusPanel.classList.toggle('d-none', syncScope() !== 'incremental' || tables.length === 0);
+    checkpointStatusPanel.replaceChildren();
+    if (!tables.length || syncScope() !== 'incremental') return;
+    const title = document.createElement('strong'); title.textContent = 'Checkpoint plan'; checkpointStatusPanel.appendChild(title);
+    tables.forEach(function (name) {
+      const status = checkpointStatuses[name] || {};
+      const row = document.createElement('div'); row.className = 'sync-checkpoint-row';
+      const label = document.createElement('code'); label.textContent = name + '.' + incrementalColumns[name];
+      const detail = document.createElement('span');
+      detail.textContent = status.cursor_value !== undefined && status.cursor_value !== null ? 'Continuing after ' + status.cursor_value + ' (primary key ' + status.cursor_primary_key + ')' : 'First run for this filter scope';
+      row.append(label, detail); checkpointStatusPanel.appendChild(row);
+    });
+  }
+  function refreshCheckpointStatuses(selected) {
+    if (!checkpointStatusPanel || syncScope() !== 'incremental') return;
+    const names = selected.map(function (item) { return item.value || item; });
+    if (!names.length || !names.every(function (name) { return incrementalColumns[name]; })) return;
+    const csrfToken = syncForm.querySelector('input[name="csrf_token"]');
+    fetch('{{ url_for("sync.checkpoint_status") }}', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken ? csrfToken.value : ''}, body: JSON.stringify({source_id: source.value, target_id: target.value, table_filters: tableFilters, incremental_columns: incrementalColumns})})
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (payload) { if (payload && payload.statuses) { checkpointStatuses = payload.statuses; renderCheckpointStatuses(selectedTableOptions()); } })
+      .catch(function () {});
+  }
+  function scheduleCheckpointStatusRefresh(selected) { clearTimeout(checkpointRefreshTimer); checkpointRefreshTimer = setTimeout(function () { refreshCheckpointStatuses(selected); }, 250); }
   function renderIncrementalSettings() {
     if (!incrementalSettings || !tablePicker) return;
     const selected = selectedTableOptions();
@@ -358,9 +386,9 @@
         panel.appendChild(row);
         configureValueInput();
       };
-      const sync = function () { tableFilters[name] = Array.from(panel.querySelectorAll('.row')).map(function (row) { const fields = row.querySelectorAll('select, input'); return {column: fields[0].value, operator: fields[1].value, json_path: fields[2].value, value: fields[3].value}; }).filter(function (rule) { return rule.column; }); state.textContent = tableFilters[name].length ? tableFilters[name].length + ' filter' + (tableFilters[name].length === 1 ? '' : 's') : 'No filters'; state.classList.toggle('has-filters', tableFilters[name].length > 0); clear.disabled = tableFilters[name].length === 0; saveTableFilters(); invalidateValidation(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); };
+      const sync = function () { tableFilters[name] = Array.from(panel.querySelectorAll('.row')).map(function (row) { const fields = row.querySelectorAll('select, input'); return {column: fields[0].value, operator: fields[1].value, json_path: fields[2].value, value: fields[3].value}; }).filter(function (rule) { return rule.column; }); state.textContent = tableFilters[name].length ? tableFilters[name].length + ' filter' + (tableFilters[name].length === 1 ? '' : 's') : 'No filters'; state.classList.toggle('has-filters', tableFilters[name].length > 0); clear.disabled = tableFilters[name].length === 0; saveTableFilters(); invalidateValidation(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); renderCheckpointStatuses(selectedTableOptions()); scheduleCheckpointStatusRefresh(selectedTableOptions()); };
       rules.forEach(addRule);
-      clear.addEventListener('click', function () { tableFilters[name] = []; invalidateValidation(); renderTableFilters(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); });
+      clear.addEventListener('click', function () { tableFilters[name] = []; invalidateValidation(); renderTableFilters(); syncVisualSelection(); renderSyncSummary(selectedTableOptions(), source.value === target.value); renderCheckpointStatuses(selectedTableOptions()); scheduleCheckpointStatusRefresh(selectedTableOptions()); });
       const add = document.createElement('button'); add.type = 'button'; add.className = 'btn btn-outline-secondary btn-sm mt-2'; add.textContent = 'Add filter'; add.addEventListener('click', function () { addRule({}); sync(); }); panel.appendChild(add);
       state.textContent = rules.length ? rules.length + ' filter' + (rules.length === 1 ? '' : 's') : 'No filters'; state.classList.toggle('has-filters', rules.length > 0);
       clear.disabled = rules.length === 0;
@@ -444,6 +472,8 @@
     renderIncrementalSettings();
     renderTableFilters();
     renderSyncSummary(selectedTables, invalidDirection);
+    renderCheckpointStatuses(selectedTables);
+    scheduleCheckpointStatusRefresh(selectedTables);
   }
 
   function syncVisualSelection() {

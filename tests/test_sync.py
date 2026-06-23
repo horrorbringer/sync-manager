@@ -4,7 +4,7 @@ from werkzeug.datastructures import MultiDict
 
 from sync_manager import db
 from sync_manager.models import DatabaseConnection, SyncJob, User
-from sync_manager.sync.routes import _remember_planned_parent_values
+from sync_manager.sync.routes import _dependency_parent_tables, _remember_planned_parent_values, _row_limit_for_table
 
 
 def _failed_job(app, table_name="customers", sync_mode="insert_only"):
@@ -50,6 +50,14 @@ def test_incremental_parent_preview_values_are_available_to_dependent_validation
     assert planned_parent_values == {"academic_years": {1, 2, 3, 4}}
 
 
+def test_row_limit_does_not_cap_selected_dependency_parents():
+    parent_tables = _dependency_parent_tables({"dependencies": {"custom_form_entries": ["users", "custom_forms"], "users": ["academic_years"]}})
+
+    assert parent_tables == {"users", "custom_forms", "academic_years"}
+    assert _row_limit_for_table("users", 100, parent_tables) is None
+    assert _row_limit_for_table("custom_form_entries", 100, parent_tables) == 100
+
+
 def test_invalid_parent_preview_values_are_not_available_to_dependent_validation():
     planned_parent_values = {}
 
@@ -60,6 +68,28 @@ def test_invalid_parent_preview_values_are_not_available_to_dependent_validation
     )
 
     assert planned_parent_values == {}
+
+
+def test_checkpoint_status_endpoint_returns_current_filter_scope(app, client, monkeypatch):
+    with app.app_context():
+        source = DatabaseConnection(name="checkpoint-source", host="localhost", database_name="source", username="root", encrypted_password="x")
+        target = DatabaseConnection(name="checkpoint-target", host="localhost", database_name="target", username="root", encrypted_password="x")
+        db.session.add_all([source, target])
+        db.session.commit()
+        source_id, target_id = source.id, target.id
+    monkeypatch.setattr(
+        "sync_manager.sync.routes.incremental_checkpoint_status",
+        lambda source_id, target_id, filters, columns: {"users": {"column": columns["users"], "cursor_value": "2026-06-23T10:00:00", "cursor_primary_key": "42", "updated_at": None}},
+    )
+    client.post("/auth/login", data={"username": "admin", "password": "password"})
+
+    response = client.post(
+        "/sync/checkpoint-status",
+        json={"source_id": source_id, "target_id": target_id, "table_filters": {"users": []}, "incremental_columns": {"users": "updated_at"}},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["statuses"]["users"]["cursor_primary_key"] == "42"
 
 
 def test_failed_job_can_be_retried(app, client, monkeypatch):
